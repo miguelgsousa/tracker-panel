@@ -811,6 +811,18 @@
             flex-shrink: 0
         }
 
+        .mobile-header {
+            display: none;
+        }
+
+        .mobile-bottom-nav {
+            display: none;
+        }
+
+        .mobile-menu-overlay {
+            display: none;
+        }
+
         @media(max-width:1024px) {
             .sidebar {
                 display: none
@@ -822,6 +834,188 @@
         }
 
         @media(max-width:768px) {
+            body {
+                background: #020202;
+                /* Very dark background */
+            }
+
+            .mobile-header {
+                display: flex;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 70px;
+                background: #020202;
+                z-index: 50;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0 20px;
+                /* Subtle bottom border */
+                border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            }
+
+            .mobile-header .logo {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+
+            .mobile-header .logo-icon {
+                width: 32px;
+                height: 32px;
+                background: transparent;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: var(--cyan);
+            }
+
+            .mobile-header .logo-text {
+                font-family: 'Space Grotesk', sans-serif;
+                font-size: 18px;
+                font-weight: 700;
+                color: #fff;
+                letter-spacing: 1px;
+                text-transform: uppercase;
+            }
+
+            .mobile-header .actions {
+                display: flex;
+                gap: 10px;
+            }
+
+            .mobile-header .actions button {
+                width: 38px;
+                height: 38px;
+                border-radius: 12px;
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                color: var(--muted);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+            }
+
+            .mobile-bottom-nav {
+                display: flex;
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                height: 75px;
+                background: rgba(5, 5, 5, 0.95);
+                backdrop-filter: blur(10px);
+                z-index: 50;
+                align-items: center;
+                justify-content: space-around;
+                padding: 0 10px;
+                border-top: 1px solid rgba(255, 255, 255, 0.05);
+                padding-bottom: env(safe-area-inset-bottom);
+            }
+
+            .mobile-bottom-nav .nav-item {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+                color: var(--muted);
+                cursor: pointer;
+                transition: color 0.2s;
+                padding: 8px;
+                border: none;
+                flex: 1;
+            }
+
+            .mobile-bottom-nav .nav-item.active {
+                color: var(--cyan);
+                background: transparent;
+                border: none;
+            }
+
+            .mobile-bottom-nav .nav-item i {
+                width: 22px;
+                height: 22px;
+            }
+
+            .mobile-bottom-nav .nav-item span {
+                font-size: 10px;
+                font-weight: 600;
+            }
+
+            .mobile-menu-overlay {
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.8);
+                backdrop-filter: blur(10px);
+                z-index: 45;
+                display: none;
+                flex-direction: column;
+                justify-content: flex-end;
+                padding-bottom: 75px;
+            }
+
+            .mobile-menu-overlay.show {
+                display: flex;
+                animation: fadeIn 0.2s ease;
+            }
+
+            @keyframes fadeIn {
+                from {
+                    opacity: 0;
+                }
+
+                to {
+                    opacity: 1;
+                }
+            }
+
+            .mobile-menu-content {
+                background: #0a0a0a;
+                border-top: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 24px 24px 0 0;
+                padding: 24px;
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                transform: translateY(100%);
+                animation: slideUp 0.3s forwards;
+            }
+
+            @keyframes slideUp {
+                to {
+                    transform: translateY(0);
+                }
+            }
+
+            .mobile-menu-item {
+                display: flex;
+                align-items: center;
+                gap: 16px;
+                padding: 16px;
+                background: rgba(255, 255, 255, 0.03);
+                border-radius: 16px;
+                color: #fff;
+                font-size: 15px;
+                font-weight: 600;
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                cursor: pointer;
+            }
+
+            .mobile-menu-item:active {
+                background: rgba(255, 255, 255, 0.08);
+            }
+
+            .mobile-menu-item i {
+                color: var(--cyan);
+            }
+
+            .main {
+                padding: 90px 16px 100px 16px;
+            }
+
             .bento {
                 grid-template-columns: 1fr
             }
@@ -832,14 +1026,88 @@
                 grid-column: span 1
             }
 
-            .main {
-                padding: 16px
+            .profile-card,
+            .vid-card,
+            .glass {
+                background: #080808 !important;
+                border: 1px solid rgba(255, 255, 255, 0.06) !important;
+                border-radius: 20px !important;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5) !important;
+            }
+
+            .folder-card {
+                background: rgba(0, 217, 255, 0.03) !important;
+                border-radius: 16px !important;
+            }
+
+            /* Customizing inputs and buttons specifically for mobile */
+            .btn {
+                border-radius: 12px;
+                padding: 12px 20px;
+                font-size: 14px;
             }
         }
     </style>
 </head>
 
 <body>
+
+    <!-- Mobile Top Header -->
+    <header class="mobile-header">
+        <div class="logo">
+            <div class="logo-icon">
+                <i data-lucide="activity" style="width:24px;height:24px;"></i>
+            </div>
+            <span class="logo-text">Tracker</span>
+        </div>
+        <div class="actions">
+            <button><i data-lucide="help-circle" style="width:18px;height:18px"></i></button>
+            <button><i data-lucide="settings" style="width:18px;height:18px"></i></button>
+        </div>
+    </header>
+
+    <!-- Mobile Bottom Navigation -->
+    <nav class="mobile-bottom-nav">
+        <div class="nav-item active" id="mob-nav-youtube"
+            onclick="switchTab('youtube', this); updateMobileNav('youtube');">
+            <i data-lucide="youtube"></i>
+            <span>YouTube</span>
+        </div>
+        <div class="nav-item" id="mob-nav-tiktok" onclick="switchTab('tiktok', this); updateMobileNav('tiktok');">
+            <i data-lucide="clapperboard"></i>
+            <span>TikTok</span>
+        </div>
+        <div class="nav-item" id="mob-nav-instagram"
+            onclick="switchTab('instagram', this); updateMobileNav('instagram');">
+            <i data-lucide="instagram"></i>
+            <span>Instagram</span>
+        </div>
+        <div class="nav-item" id="mob-nav-facebook" onclick="switchTab('facebook', this); updateMobileNav('facebook');">
+            <i data-lucide="facebook"></i>
+            <span>Facebook</span>
+        </div>
+        <div class="nav-item" onclick="toggleMobileMenu()">
+            <i data-lucide="layout-grid"></i>
+            <span>Mais</span>
+        </div>
+    </nav>
+
+    <!-- Mobile Extra Menu Overlay -->
+    <div class="mobile-menu-overlay" id="mobile-menu" onclick="if(event.target===this) toggleMobileMenu()">
+        <div class="mobile-menu-content">
+            <div
+                style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:2px;font-weight:700;margin-bottom:8px">
+                Mais Ferramentas</div>
+            <div class="mobile-menu-item"
+                onclick="switchTab('twitter', null); updateMobileNav('twitter'); toggleMobileMenu();">
+                <i data-lucide="twitter"></i> Twitter / X Tracker
+            </div>
+            <div class="mobile-menu-item"
+                onclick="switchTab('reports', null); updateMobileNav('reports'); toggleMobileMenu();">
+                <i data-lucide="bar-chart-3"></i> Relatórios Globais
+            </div>
+        </div>
+    </div>
 
     <!-- Sidebar -->
     <aside class="sidebar">
@@ -1567,6 +1835,22 @@
             currentPlatform = id;
             if (PLATFORMS[id]) renderPlatformTab(id);
             if (id === 'reports') renderReports();
+        }
+
+        // --- Mobile Nav helpers ---
+        function updateMobileNav(platform) {
+            document.querySelectorAll('.mobile-bottom-nav .nav-item').forEach(el => el.classList.remove('active'));
+            const mobEl = document.getElementById(`mob-nav-${platform}`);
+            if (mobEl) mobEl.classList.add('active');
+        }
+
+        function toggleMobileMenu() {
+            const menu = document.getElementById('mobile-menu');
+            if (menu.classList.contains('show')) {
+                menu.classList.remove('show');
+            } else {
+                menu.classList.add('show');
+            }
         }
 
         // --- Modal ---
