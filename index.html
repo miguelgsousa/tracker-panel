@@ -1,0 +1,1831 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Social Tracker - Monitoramento de Redes Sociais</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap"
+        rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box
+        }
+
+        :root {
+            --bg: #000;
+            --border: rgba(255, 255, 255, .12);
+            --cyan: #00D9FF;
+            --text: #e2e8f0;
+            --muted: #64748b;
+            --green: #10b981;
+            --red: #ef4444;
+            --yellow: #eab308;
+            --orange: #f97316;
+            --purple: #a855f7;
+            --blue: #3b82f6;
+            --pink: #ec4899
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+            min-height: 100vh;
+            background-image: radial-gradient(ellipse at 20% 50%, rgba(0, 217, 255, .03) 0%, transparent 50%), radial-gradient(ellipse at 80% 20%, rgba(0, 217, 255, .02) 0%, transparent 40%)
+        }
+
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            opacity: .03;
+            mix-blend-mode: overlay;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, .1);
+            border-radius: 3px
+        }
+
+        .font-display {
+            font-family: 'Space Grotesk', sans-serif
+        }
+
+        .glass {
+            position: relative;
+            border-radius: 16px;
+            backdrop-filter: blur(24px);
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, .15);
+            box-shadow: 0 24px 60px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .10);
+            overflow: hidden;
+            transition: all .3s
+        }
+
+        .glass:hover {
+            background: rgba(255, 255, 255, .04)
+        }
+
+        .glass::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(0, 217, 255, .3), transparent);
+            opacity: .5
+        }
+
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 280px;
+            height: 100vh;
+            background: rgba(0, 0, 0, .4);
+            border-right: 1px solid rgba(255, 255, 255, .08);
+            backdrop-filter: blur(24px);
+            display: flex;
+            flex-direction: column;
+            z-index: 20
+        }
+
+        .sidebar .glow-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(0, 217, 255, .3), transparent);
+            opacity: .6
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 14px;
+            border-radius: 12px;
+            color: rgba(100, 116, 139, .8);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all .2s;
+            text-decoration: none;
+            border: 1px solid transparent
+        }
+
+        .nav-item:hover {
+            color: #e2e8f0;
+            background: rgba(255, 255, 255, .04)
+        }
+
+        .nav-item.active {
+            color: #fff;
+            background: rgba(255, 255, 255, .04);
+            border: 1px solid rgba(0, 217, 255, .3)
+        }
+
+        .nav-item.active .nav-icon {
+            color: var(--cyan)
+        }
+
+        .nav-label {
+            font-size: 9px;
+            font-weight: 700;
+            color: rgba(100, 116, 139, .6);
+            text-transform: uppercase;
+            letter-spacing: 2.5px;
+            padding: 0 14px;
+            margin-bottom: 8px;
+            margin-top: 16px
+        }
+
+        .main {
+            margin-left: 280px;
+            min-height: 100vh;
+            padding: 32px;
+            position: relative;
+            z-index: 10
+        }
+
+        .stat-label {
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 2px
+        }
+
+        .stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            font-family: 'Space Grotesk', sans-serif;
+            letter-spacing: -1px
+        }
+
+        .stat-icon {
+            width: 42px;
+            height: 42px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, .05));
+            border: 1px solid rgba(255, 255, 255, .1);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, .3)
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 10px;
+            font-weight: 700
+        }
+
+        .badge-green {
+            background: rgba(16, 185, 129, .2);
+            color: #10b981
+        }
+
+        .badge-red {
+            background: rgba(239, 68, 68, .2);
+            color: #ef4444
+        }
+
+        .bento {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px
+        }
+
+        .bento .col2 {
+            grid-column: span 2
+        }
+
+        .bento .col3 {
+            grid-column: span 3
+        }
+
+        .bento .col4 {
+            grid-column: span 4
+        }
+
+        .bento .row2 {
+            grid-row: span 2
+        }
+
+        .tab-content {
+            display: none;
+            animation: fadeUp .4s ease
+        }
+
+        .tab-content.active {
+            display: block
+        }
+
+        @keyframes fadeUp {
+            from {
+                opacity: 0;
+                transform: translateY(8px)
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0)
+            }
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg)
+            }
+        }
+
+        .vid-card {
+            background: rgba(0, 0, 0, .4);
+            border: 1px solid rgba(255, 255, 255, .1);
+            border-radius: 14px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: all .3s
+        }
+
+        .vid-card:hover {
+            border-color: rgba(255, 255, 255, .2);
+            transform: translateY(-2px);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, .4)
+        }
+
+        .vid-thumb {
+            aspect-ratio: 16/9;
+            background: linear-gradient(135deg, #0a0a0a, #111);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden
+        }
+
+        .vid-thumb img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover
+        }
+
+
+        /* Folders and Drag&Drop */
+        .folder-card {
+            background: rgba(0, 217, 255, .05);
+            border: 1px dashed rgba(0, 217, 255, .3);
+            border-radius: 14px;
+            padding: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .folder-card:hover {
+            background: rgba(0, 217, 255, .1);
+            border-style: solid;
+        }
+
+        .folder-card.drag-over {
+            background: rgba(0, 217, 255, .2);
+            border: 2px solid var(--cyan);
+            transform: scale(1.02);
+            box-shadow: 0 0 20px rgba(0, 217, 255, .2);
+        }
+
+        .folder-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            background: rgba(0, 217, 255, .1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--cyan);
+        }
+
+        .profile-card.dragging {
+            opacity: 0.5;
+            transform: scale(0.95);
+        }
+
+        .profile-card.multi-selected {
+            border-color: var(--purple);
+            box-shadow: 0 0 15px rgba(168, 85, 247, 0.3);
+            background: rgba(168, 85, 247, 0.05);
+        }
+
+        .drag-ghost {
+            position: fixed;
+            pointer-events: none;
+            z-index: 1000;
+            background: var(--bg);
+            border: 1px solid var(--cyan);
+            padding: 8px 16px;
+            border-radius: 8px;
+            color: #fff;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 10px 30px rgba(0, 217, 255, 0.3);
+        }
+
+        .drag-ghost .count {
+            background: var(--cyan);
+            color: #000;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+        }
+
+        .checkbox-custom {
+            width: 16px;
+            height: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+
+        .checkbox-custom.checked {
+            background: var(--purple);
+            border-color: var(--purple);
+            color: #fff;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all .2s;
+            border: none;
+            font-family: inherit
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--cyan), #0099cc);
+            color: #000;
+            box-shadow: 0 4px 20px rgba(0, 217, 255, .3)
+        }
+
+        .btn-primary:hover {
+            box-shadow: 0 6px 30px rgba(0, 217, 255, .5);
+            transform: translateY(-1px)
+        }
+
+        .btn-outline {
+            background: transparent;
+            color: var(--muted);
+            border: 1px solid rgba(255, 255, 255, .15)
+        }
+
+        .btn-outline:hover {
+            color: #fff;
+            border-color: rgba(255, 255, 255, .3);
+            background: rgba(255, 255, 255, .05)
+        }
+
+        .btn-danger {
+            background: rgba(239, 68, 68, .15);
+            color: var(--red);
+            border: 1px solid rgba(239, 68, 68, .3)
+        }
+
+        .btn-danger:hover {
+            background: rgba(239, 68, 68, .25)
+        }
+
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 11px;
+            border-radius: 8px
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, .7);
+            backdrop-filter: blur(8px);
+            z-index: 100;
+            display: none;
+            align-items: center;
+            justify-content: center
+        }
+
+        .modal-overlay.show {
+            display: flex
+        }
+
+        .modal {
+            background: #0a0a0a;
+            border: 1px solid rgba(255, 255, 255, .15);
+            border-radius: 20px;
+            padding: 32px;
+            width: 90%;
+            max-width: 480px;
+            box-shadow: 0 40px 80px rgba(0, 0, 0, .6)
+        }
+
+        .modal h2 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 8px
+        }
+
+        .modal p {
+            font-size: 12px;
+            color: var(--muted);
+            margin-bottom: 24px
+        }
+
+        .input-group {
+            margin-bottom: 16px
+        }
+
+        .input-group label {
+            display: block;
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin-bottom: 6px
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 12px 16px;
+            background: rgba(255, 255, 255, .05);
+            border: 1px solid rgba(255, 255, 255, .12);
+            border-radius: 12px;
+            color: #fff;
+            font-size: 14px;
+            font-family: inherit;
+            outline: none;
+            transition: all .2s
+        }
+
+        .input-group input:focus {
+            border-color: var(--cyan);
+            box-shadow: 0 0 20px rgba(0, 217, 255, .15)
+        }
+
+        .input-group input::placeholder {
+            color: rgba(100, 116, 139, .5)
+        }
+
+        /* Account card */
+        .account-card {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px;
+            border: 1px solid rgba(255, 255, 255, .1);
+            border-radius: 14px;
+            background: rgba(255, 255, 255, .02);
+            transition: all .2s;
+            margin-bottom: 8px
+        }
+
+        .account-card:hover {
+            background: rgba(255, 255, 255, .05);
+            border-color: rgba(255, 255, 255, .2)
+        }
+
+        /* Period tabs */
+        .period-tabs {
+            display: flex;
+            background: rgba(15, 23, 42, .4);
+            padding: 6px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, .05);
+            gap: 2px;
+            width: fit-content
+        }
+
+        .period-tab {
+            padding: 8px 16px;
+            font-size: 11px;
+            font-weight: 700;
+            border-radius: 8px;
+            color: var(--muted);
+            cursor: pointer;
+            transition: all .3s;
+            white-space: nowrap;
+            border: none;
+            background: none;
+            font-family: inherit
+        }
+
+        .period-tab.active {
+            color: #fff;
+            background: rgba(255, 255, 255, .08);
+            box-shadow: inset 0 -2px 8px rgba(0, 217, 255, .15);
+            border: 1px solid rgba(255, 255, 255, .1)
+        }
+
+        .period-tab:hover:not(.active) {
+            color: #fff;
+            background: rgba(255, 255, 255, .05)
+        }
+
+        /* Loading */
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, .1);
+            border-top-color: var(--cyan);
+            border-radius: 50%;
+            animation: spin .6s linear infinite;
+            display: inline-block
+        }
+
+        .loading-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            padding: 48px;
+            color: var(--muted);
+            font-size: 12px
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 48px 24px
+        }
+
+        .empty-icon {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, .04);
+            border: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 16px
+        }
+
+        /* Status dot */
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block
+        }
+
+        .status-online {
+            background: var(--green);
+            box-shadow: 0 0 8px var(--green)
+        }
+
+        .status-offline {
+            background: var(--muted)
+        }
+
+        /* TikTok specific */
+        .profile-card {
+            padding: 16px;
+            border: 1px solid rgba(255, 255, 255, .1);
+            border-radius: 14px;
+            background: rgba(255, 255, 255, .02);
+            cursor: pointer;
+            transition: all .2s;
+            display: flex;
+            align-items: center;
+            gap: 14px
+        }
+
+        .profile-card:hover {
+            background: rgba(255, 255, 255, .05);
+            border-color: rgba(255, 255, 255, .2)
+        }
+
+        .profile-card.selected {
+            background: rgba(0, 217, 255, .06);
+            border-color: rgba(0, 217, 255, .4);
+            box-shadow: 0 0 20px rgba(0, 217, 255, .1)
+        }
+
+        .profile-card .avatar {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, .06);
+            border: 2px solid rgba(255, 255, 255, .1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 18px;
+            color: #fff;
+            flex-shrink: 0
+        }
+
+        .profile-card.selected .avatar {
+            border-color: var(--cyan);
+            box-shadow: 0 0 12px rgba(0, 217, 255, .3)
+        }
+
+        .view-toggle {
+            display: flex;
+            background: rgba(15, 23, 42, .4);
+            padding: 4px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, .05);
+            gap: 2px
+        }
+
+        .view-toggle button {
+            padding: 6px 10px;
+            border-radius: 8px;
+            border: none;
+            background: none;
+            color: var(--muted);
+            cursor: pointer;
+            transition: all .2s;
+            display: flex;
+            align-items: center
+        }
+
+        .view-toggle button.active {
+            background: rgba(255, 255, 255, .08);
+            color: #fff
+        }
+
+        .view-toggle button:hover:not(.active) {
+            color: #fff
+        }
+
+        /* Sort dropdown */
+        .sort-dropdown .sort-menu {
+            position: absolute;
+            top: calc(100% + 6px);
+            right: 0;
+            min-width: 170px;
+            background: rgba(15, 23, 42, .95);
+            border: 1px solid rgba(255, 255, 255, .1);
+            border-radius: 10px;
+            padding: 4px;
+            display: none;
+            flex-direction: column;
+            gap: 2px;
+            z-index: 100;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+        }
+
+        .sort-dropdown.open .sort-menu {
+            display: flex;
+            animation: sortFadeIn .15s ease;
+        }
+
+        @keyframes sortFadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-4px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .sort-menu button {
+            padding: 8px 12px;
+            border: none;
+            background: transparent;
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: 7px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all .15s;
+            white-space: nowrap;
+        }
+
+        .sort-menu button:hover {
+            background: rgba(255, 255, 255, .06);
+            color: #fff;
+        }
+
+        .sort-menu button.active {
+            background: rgba(0, 217, 255, .1);
+            color: var(--cyan);
+        }
+
+        .video-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 4px
+        }
+
+        .video-table th {
+            text-align: left;
+            font-size: 9px;
+            font-weight: 700;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            padding: 8px 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, .06)
+        }
+
+        .video-table td {
+            padding: 10px 12px;
+            font-size: 12px;
+            vertical-align: middle
+        }
+
+        .video-table tr.video-row {
+            background: rgba(255, 255, 255, .02);
+            cursor: pointer;
+            transition: all .2s
+        }
+
+        .video-table tr.video-row:hover {
+            background: rgba(255, 255, 255, .06)
+        }
+
+        .video-table tr.video-row td:first-child {
+            border-radius: 12px 0 0 12px
+        }
+
+        .video-table tr.video-row td:last-child {
+            border-radius: 0 12px 12px 0
+        }
+
+        .mini-thumb {
+            width: 80px;
+            height: 45px;
+            border-radius: 8px;
+            object-fit: cover;
+            background: #111;
+            flex-shrink: 0
+        }
+
+        @media(max-width:1024px) {
+            .sidebar {
+                display: none
+            }
+
+            .main {
+                margin-left: 0
+            }
+        }
+
+        @media(max-width:768px) {
+            .bento {
+                grid-template-columns: 1fr
+            }
+
+            .bento .col2,
+            .bento .col3,
+            .bento .col4 {
+                grid-column: span 1
+            }
+
+            .main {
+                padding: 16px
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="glow-line"></div>
+        <div style="padding:20px;display:flex;align-items:center;gap:10px">
+            <div
+                style="width:38px;height:38px;border-radius:12px;background:linear-gradient(135deg,var(--cyan),var(--blue));display:flex;align-items:center;justify-content:center">
+                <i data-lucide="activity" style="width:20px;height:20px;color:#fff"></i>
+            </div>
+            <div><span style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;color:#fff">Social
+                    Tracker</span></div>
+        </div>
+        <div style="padding:0 16px;margin-bottom:16px">
+            <div
+                style="padding:12px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid var(--border)">
+                <div style="display:flex;align-items:center;gap:10px">
+                    <div
+                        style="width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.06);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff">
+                        M</div>
+                    <div><span style="font-size:12px;font-weight:700;color:#fff">Miguel</span><br><span
+                            style="font-size:10px;color:var(--muted)">Plano Pro</span></div>
+                </div>
+            </div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:0 16px">
+            <div class="nav-label">MONITORAMENTO</div>
+            <a class="nav-item active" onclick="switchTab('youtube',this)"><i data-lucide="youtube" class="nav-icon"
+                    style="width:18px;height:18px;color:var(--cyan)"></i>
+                <div>
+                    <p style="font-size:12px;font-weight:500;line-height:1">YouTube</p>
+                    <p style="font-size:10px;color:var(--muted);margin-top:2px">Canais e vídeos</p>
+                </div><span id="badge-youtube" class="badge badge-green" style="margin-left:auto;display:none">0</span>
+            </a>
+            <a class="nav-item" onclick="switchTab('tiktok',this)"><i data-lucide="clapperboard" class="nav-icon"
+                    style="width:18px;height:18px"></i>
+                <div>
+                    <p style="font-size:12px;font-weight:500;line-height:1">TikTok</p>
+                    <p style="font-size:10px;color:var(--muted);margin-top:2px">Perfis e trends</p>
+                </div><span id="badge-tiktok" class="badge badge-green" style="margin-left:auto;display:none">0</span>
+            </a>
+            <a class="nav-item" onclick="switchTab('instagram',this)"><i data-lucide="instagram" class="nav-icon"
+                    style="width:18px;height:18px"></i>
+                <div>
+                    <p style="font-size:12px;font-weight:500;line-height:1">Instagram</p>
+                    <p style="font-size:10px;color:var(--muted);margin-top:2px">Reels e stories</p>
+                </div><span id="badge-instagram" class="badge badge-green"
+                    style="margin-left:auto;display:none">0</span>
+            </a>
+            <a class="nav-item" onclick="switchTab('facebook',this)"><i data-lucide="facebook" class="nav-icon"
+                    style="width:18px;height:18px"></i>
+                <div>
+                    <p style="font-size:12px;font-weight:500;line-height:1">Facebook</p>
+                    <p style="font-size:10px;color:var(--muted);margin-top:2px">Páginas e grupos</p>
+                </div><span id="badge-facebook" class="badge badge-green" style="margin-left:auto;display:none">0</span>
+            </a>
+            <a class="nav-item" onclick="switchTab('twitter',this)"><i data-lucide="twitter" class="nav-icon"
+                    style="width:18px;height:18px"></i>
+                <div>
+                    <p style="font-size:12px;font-weight:500;line-height:1">Twitter / X</p>
+                    <p style="font-size:10px;color:var(--muted);margin-top:2px">Posts e threads</p>
+                </div><span id="badge-twitter" class="badge badge-green" style="margin-left:auto;display:none">0</span>
+            </a>
+            <div class="nav-label">FERRAMENTAS</div>
+            <a class="nav-item" onclick="switchTab('reports',this)"><i data-lucide="bar-chart-3" class="nav-icon"
+                    style="width:18px;height:18px"></i>
+                <div>
+                    <p style="font-size:12px;font-weight:500;line-height:1">Relatórios Globais</p>
+                    <p style="font-size:10px;color:var(--muted);margin-top:2px">Análises avançadas</p>
+                </div>
+            </a>
+        </div>
+        <div style="padding:16px;border-top:1px solid rgba(255,255,255,.06)">
+            <div style="display:flex;align-items:center;gap:8px;font-size:10px;color:var(--muted)">
+                <span class="status-dot" id="server-status"></span>
+                <span id="server-status-text">Verificando servidor...</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Add Account Modal -->
+    <div class="modal-overlay" id="modal-add">
+        <div class="modal">
+            <h2 id="modal-title">Adicionar Conta</h2>
+            <p id="modal-desc">Insira o @handle ou URL do canal/perfil</p>
+            <div class="input-group">
+                <label>Handle / Username</label>
+                <input type="text" id="input-handle" placeholder="@username ou URL do canal">
+            </div>
+            <div class="input-group">
+                <label>Nome de exibição (opcional)</label>
+                <input type="text" id="input-name" placeholder="Nome personalizado">
+            </div>
+            <div class="input-group" id="group-cookie" style="display:none">
+                <label>Cookies (opcional)</label>
+                <textarea id="input-cookie" placeholder="Cole os cookies da conta" rows="3"
+                    style="width:100%;padding:12px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:12px;color:#fff;font-size:12px;font-family:inherit;resize:vertical"></textarea>
+                <p style="font-size:10px;color:var(--yellow);margin-top:4px">Útil para perfis restritos (Instagram,
+                    Facebook, X)</p>
+            </div>
+            <div id="modal-error" style="color:var(--red);font-size:11px;margin-bottom:12px;display:none"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+                <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+                <button class="btn btn-primary" id="btn-add-confirm" onclick="confirmAddAccount()">
+                    <i data-lucide="plus" style="width:14px;height:14px"></i> Adicionar
+                </button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Add Folder Modal -->
+    <div class="modal-overlay" id="modal-folder">
+        <div class="modal">
+            <h2>Nova Pasta</h2>
+            <p>Agrupe suas contas em pastas</p>
+            <div class="input-group">
+                <label>Nome da Pasta</label>
+                <input type="text" id="input-folder-name" placeholder="Ex: Clientes, Concorrentes...">
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:24px">
+                <button class="btn btn-outline"
+                    onclick="document.getElementById('modal-folder').classList.remove('show')">Cancelar</button>
+                <button class="btn btn-primary" onclick="confirmAddFolder()">Criar Pasta</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Cookie Modal -->
+    <div class="modal-overlay" id="modal-cookie">
+        <div class="modal">
+            <h2>Editar Cookies</h2>
+            <p>Atualize os cookies de sessão caso tenham expirado.</p>
+            <div class="input-group">
+                <label>Cookies</label>
+                <textarea id="input-edit-cookie" placeholder="Cole os cookies aqui" rows="4"
+                    style="width:100%;padding:12px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:12px;color:#fff;font-size:12px;font-family:inherit;resize:vertical"></textarea>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:24px">
+                <button class="btn btn-outline"
+                    onclick="document.getElementById('modal-cookie').classList.remove('show')">Cancelar</button>
+                <button class="btn btn-primary" onclick="confirmEditCookie()">Salvar Cookies</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Facebook API Token Modal -->
+    <div class="modal-overlay" id="modal-fb-token">
+        <div class="modal">
+            <h2 style="display:flex;align-items:center;gap:10px"><i data-lucide="key"
+                    style="width:22px;height:22px;color:#1877f2"></i> Facebook Graph API</h2>
+            <p style="margin-bottom:16px">Configure seu token de acesso da API do Facebook para extrair dados completos
+                das páginas.</p>
+            <div class="input-group">
+                <label>Access Token</label>
+                <textarea id="input-fb-token"
+                    placeholder="Cole seu token de acesso aqui (Page Access Token ou User Access Token)" rows="3"
+                    style="width:100%;padding:12px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:12px;color:#fff;font-size:12px;font-family:monospace;resize:vertical"></textarea>
+            </div>
+            <div id="fb-token-status" style="font-size:11px;margin-bottom:12px;display:none"></div>
+            <div
+                style="background:rgba(24,119,242,.08);border:1px solid rgba(24,119,242,.2);border-radius:10px;padding:12px;margin-bottom:16px">
+                <p style="font-size:11px;color:rgba(255,255,255,.7);line-height:1.6">
+                    <strong style="color:#1877f2">Como obter o token:</strong><br>
+                    1. Acesse <a href="https://developers.facebook.com/tools/explorer/" target="_blank"
+                        style="color:#1877f2">Graph API Explorer</a><br>
+                    2. Selecione seu App e a Página desejada<br>
+                    3. Adicione as permissões: <code
+                        style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;font-size:10px">pages_read_engagement</code>,
+                    <code
+                        style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;font-size:10px">pages_show_list</code>,
+                    <code
+                        style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;font-size:10px">pages_read_user_content</code><br>
+                    4. Clique em "Generate Access Token" e cole aqui
+                </p>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+                <button class="btn btn-danger btn-sm" onclick="removeFbToken()" id="btn-remove-fb-token"
+                    style="margin-right:auto;display:none">Remover Token</button>
+                <button class="btn btn-outline"
+                    onclick="document.getElementById('modal-fb-token').classList.remove('show')">Cancelar</button>
+                <button class="btn btn-primary" onclick="saveFbToken()"><i data-lucide="check"
+                        style="width:14px;height:14px"></i> Salvar Token</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main -->
+    <div class="main">
+        <div style="text-align:center;margin-bottom:32px">
+            <h2 style="font-size:28px;font-weight:700;font-family:'Space Grotesk',sans-serif"><em>Boa noite,</em> <span
+                    style="background:linear-gradient(90deg,var(--cyan),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text">Miguel</span>
+            </h2>
+            <div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-top:8px;opacity:.6"><span
+                    style="width:32px;height:1px;background:linear-gradient(90deg,transparent,var(--cyan))"></span>
+                <p style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:3px;font-weight:500"
+                    id="date-display"></p><span
+                    style="width:32px;height:1px;background:linear-gradient(270deg,transparent,var(--cyan))"></span>
+            </div>
+        </div>
+
+        <!-- Each platform tab has the same structure -->
+        <div id="youtube" class="tab-content active"></div>
+        <div id="tiktok" class="tab-content"></div>
+        <div id="instagram" class="tab-content"></div>
+        <div id="facebook" class="tab-content"></div>
+        <div id="twitter" class="tab-content"></div>
+
+        <!-- Reports Tab -->
+        <div id="reports" class="tab-content">
+            <div style="margin-bottom:24px">
+                <h1 style="font-size:28px;font-weight:700;font-family:'Space Grotesk'">Relatórios Globais</h1>
+                <p
+                    style="font-size:12px;color:var(--muted);margin-top:4px;border-left:2px solid rgba(255,255,255,.1);padding-left:12px">
+                    Análises consolidadas de todas as plataformas</p>
+            </div>
+            <div id="reports-content"></div>
+        </div>
+
+    </div>
+
+    <script>
+        const API = 'http://localhost:3000/api';
+        let currentPlatform = 'youtube';
+        let allAccounts = {};
+        let allFolders = {};
+        let platformState = { youtube: { selectedProfile: null, viewMode: 'grid' }, tiktok: { selectedProfile: null, viewMode: 'grid' }, instagram: { selectedProfile: null, viewMode: 'grid' }, facebook: { selectedProfile: null, viewMode: 'grid' }, twitter: { selectedProfile: null, viewMode: 'grid' } };
+
+        const PLATFORMS = {
+            youtube: { name: 'YouTube', icon: 'youtube', color: '#ef4444', placeholder: '@techguru ou URL do canal' },
+            tiktok: { name: 'TikTok', icon: 'clapperboard', color: '#00f2ea', placeholder: '@username' },
+            instagram: { name: 'Instagram', icon: 'instagram', color: '#e1306c', placeholder: '@username' },
+            facebook: { name: 'Facebook', icon: 'facebook', color: '#1877f2', placeholder: 'nome-da-pagina ou URL' },
+            twitter: { name: 'Twitter / X', icon: 'twitter', color: '#1da1f2', placeholder: '@username' }
+        };
+
+        // --- Date ---
+        const now = new Date();
+        const months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+        document.getElementById('date-display').textContent = `${now.getDate()} de ${months[now.getMonth()]} de ${now.getFullYear()}`;
+
+        // --- Format numbers ---
+        function fmt(n) {
+            if (n === null || n === undefined) return '—';
+            if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+            if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+            return String(n);
+        }
+
+        function fmtDuration(seconds) {
+            if (!seconds) return '';
+            const m = Math.floor(seconds / 60);
+            const s = seconds % 60;
+            return `${m}:${String(s).padStart(2, '0')}`;
+        }
+
+        // --- Server check ---
+        async function checkServer() {
+            const dot = document.getElementById('server-status');
+            const text = document.getElementById('server-status-text');
+            try {
+                const r = await fetch(API + '/accounts', { signal: AbortSignal.timeout(3000) });
+                if (r.ok) {
+                    dot.className = 'status-dot status-online';
+                    text.textContent = 'Servidor conectado';
+                    return true;
+                }
+            } catch { }
+            dot.className = 'status-dot status-offline';
+            text.textContent = 'Servidor offline — execute: node server.js';
+            return false;
+        }
+
+        // --- Load all accounts ---
+        async function loadAccounts() {
+            try {
+                const r = await fetch(API + '/accounts');
+                allAccounts = await r.json();
+                const rf = await fetch(API + '/folders');
+                allFolders = await rf.json();
+            } catch {
+                allAccounts = { youtube: [], tiktok: [], instagram: [], facebook: [], twitter: [] };
+                allFolders = { youtube: [], tiktok: [], instagram: [], facebook: [], twitter: [] };
+            }
+
+            // Update sidebar badges
+            for (const [p, accs] of Object.entries(allAccounts)) {
+                const badge = document.getElementById(`badge-${p}`);
+                if (badge) {
+                    badge.textContent = accs.length;
+                    badge.style.display = accs.length > 0 ? 'inline-flex' : 'none';
+                }
+            }
+
+            // Render current tab
+            renderPlatformTab(currentPlatform);
+        }
+
+        // --- Extra Logic for Drag and Drop ---
+        let draggedAccounts = [];
+        let mouseNode = null;
+
+        function toggleSelect(e, platform, id) {
+            e.stopPropagation();
+            const state = platformState[platform];
+            if (!state.selectedItems) state.selectedItems = [];
+            const idx = state.selectedItems.indexOf(id);
+            if (idx > -1) state.selectedItems.splice(idx, 1);
+            else state.selectedItems.push(id);
+            renderPlatformTab(platform);
+        }
+
+        function clearSelection(platform) {
+            platformState[platform].selectedItems = [];
+            renderPlatformTab(platform);
+        }
+
+        // Drag events
+        function handleDragStart(e, id, platform) {
+            const state = platformState[platform];
+            if (!state.selectedItems) state.selectedItems = [];
+
+            // se o item arrastado nao estiver selecionado, seleciona ele e limpa o resto
+            if (!state.selectedItems.includes(id)) {
+                state.selectedItems = [id];
+                renderPlatformTab(platform);
+            }
+
+            draggedAccounts = [...state.selectedItems];
+
+            // Custom ghost image
+            const ghost = document.createElement('div');
+            ghost.className = 'drag-ghost';
+            ghost.innerHTML = `<i data-lucide="users" style="width:16px"></i> Movendo <span class="count">${draggedAccounts.length}</span> conta(s)`;
+            document.body.appendChild(ghost);
+            lucide.createIcons();
+
+            e.dataTransfer.setDragImage(ghost, 0, 0);
+            e.dataTransfer.effectAllowed = 'move';
+
+            setTimeout(() => {
+                document.body.removeChild(ghost);
+                draggedAccounts.forEach(aid => {
+                    const el = document.getElementById(`card-${aid}`);
+                    if (el) el.classList.add('dragging');
+                });
+            }, 0);
+        }
+
+        function handleDragEnd(e) {
+            draggedAccounts.forEach(aid => {
+                const el = document.getElementById(`card-${aid}`);
+                if (el) el.classList.remove('dragging');
+            });
+            draggedAccounts = [];
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            e.currentTarget.classList.add('drag-over');
+        }
+
+        function handleDragLeave(e) {
+            e.currentTarget.classList.remove('drag-over');
+        }
+
+        async function handleDropOnFolder(e, folderId, platform) {
+            e.preventDefault();
+            e.currentTarget.classList.remove('drag-over');
+
+            if (draggedAccounts.length > 0) {
+                // Move logic
+                for (const aid of draggedAccounts) {
+                    await fetch(`${API}/accounts/${platform}/${aid}/folder`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ folderId: folderId === 'root' ? null : folderId })
+                    });
+                }
+                platformState[platform].selectedItems = [];
+                await loadAccounts();
+            }
+        }
+
+        function openFolderModal(platform) {
+            modalPlatform = platform;
+            document.getElementById('input-folder-name').value = '';
+            document.getElementById('modal-folder').classList.add('show');
+            setTimeout(() => document.getElementById('input-folder-name').focus(), 100);
+        }
+
+        async function confirmAddFolder() {
+            const name = document.getElementById('input-folder-name').value.trim();
+            if (!name) return;
+            await fetch(`${API}/folders/${modalPlatform}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+            document.getElementById('modal-folder').classList.remove('show');
+            await loadAccounts();
+        }
+
+        async function deleteFolder(e, folderId, platform) {
+            e.stopPropagation();
+            if (!confirm('Apagar esta pasta? As contas nela não serão apagadas, voltarão para a principal.')) return;
+            await fetch(`${API}/folders/${platform}/${folderId}`, { method: 'DELETE' });
+            await loadAccounts();
+        }
+
+        // --- Render platform tab ---
+        function renderPlatformTab(platform) {
+            const container = document.getElementById(platform);
+            const accounts = allAccounts[platform] || [];
+            const folders = allFolders[platform] || [];
+            const config = PLATFORMS[platform];
+            const state = platformState[platform] || { selectedProfile: null, viewMode: 'grid', selectedItems: [], openFolder: null, contentFilter: 'all', sortBy: 'recent' };
+            platformState[platform] = state; // ensure it's saved
+            if (!state.contentFilter) state.contentFilter = 'all';
+            if (!state.sortBy) state.sortBy = 'recent';
+
+            // Auto-select first profile if nothing selected
+            if (!state.selectedProfile && accounts.length > 0) state.selectedProfile = accounts[0].id;
+
+            const selected = accounts.find(a => a.id === state.selectedProfile);
+            const allVideos = selected?.recentContent || [];
+            let videos = platform === 'youtube' && state.contentFilter !== 'all'
+                ? allVideos.filter(v => v.type === state.contentFilter)
+                : [...allVideos];
+
+            // Sort videos based on selected sortBy option
+            if (state.sortBy === 'views') {
+                videos.sort((a, b) => (b.views || 0) - (a.views || 0));
+            } else if (state.sortBy === 'oldest') {
+                videos.sort((a, b) => {
+                    const da = a.uploadDate || a.timestamp || '';
+                    const db2 = b.uploadDate || b.timestamp || '';
+                    return String(da).localeCompare(String(db2));
+                });
+            } else {
+                // 'recent' - most recent first (default order from yt-dlp, but enforce sort)
+                videos.sort((a, b) => {
+                    const da = a.uploadDate || a.timestamp || '';
+                    const db2 = b.uploadDate || b.timestamp || '';
+                    return String(db2).localeCompare(String(da));
+                });
+            }
+
+            const mode = state.viewMode;
+
+            const followerLabel = platform === 'youtube' ? 'inscritos' : 'seguidores';
+
+            let html = `
+    <div style="display:flex;justify-content:space-between;align-items:end;margin-bottom:24px;flex-wrap:wrap;gap:16px">
+        <div>
+            <h1 style="font-size:28px;font-weight:700;font-family:'Space Grotesk'">${config.name} Tracker</h1>
+            <p style="font-size:12px;color:var(--muted);margin-top:4px;border-left:2px solid rgba(255,255,255,.1);padding-left:12px">${accounts.length} perfil(is) monitorado(s) em ${folders.length} pasta(s)</p>
+        </div>
+        <div style="display:flex;gap:8px">
+            <button class="btn btn-outline btn-sm" onclick="openFolderModal('${platform}')"><i data-lucide="folder-plus" style="width:14px;height:14px"></i> Nova Pasta</button>
+            ${accounts.length > 0 ? `<button class="btn btn-outline btn-sm" onclick="fetchAllAccounts('${platform}', ${state.openFolder ? `'${state.openFolder}'` : 'null'})"><i data-lucide="refresh-cw" style="width:14px;height:14px"></i> ${state.openFolder ? 'Atualizar Pasta' : 'Atualizar Tudo'}</button>` : ''}
+            ${platform === 'facebook' ? `<button class="btn btn-outline btn-sm" onclick="openFbTokenModal()" style="border-color:rgba(24,119,242,.3);color:#1877f2"><i data-lucide="key" style="width:14px;height:14px"></i> <span id="fb-api-btn-label">Configurar API</span></button>` : ''}
+            <button class="btn btn-primary btn-sm" onclick="openAddModal('${platform}')"><i data-lucide="plus" style="width:14px;height:14px"></i> Adicionar Perfil</button>
+        </div>
+    </div>`;
+
+            if (accounts.length === 0) {
+                html += `<div class="glass"><div class="empty-state"><div class="empty-icon"><i data-lucide="user-plus" style="width:28px;height:28px;color:var(--muted)"></i></div><h3 style="font-size:18px;font-weight:700;color:#fff;margin-bottom:8px">Nenhum perfil cadastrado</h3><p style="font-size:12px;color:var(--muted);max-width:360px;margin:0 auto 20px">Adicione perfis do ${config.name} para rastrear ${followerLabel}, views e engajamento.</p><button class="btn btn-primary" onclick="openAddModal('${platform}')"><i data-lucide="plus" style="width:16px;height:16px"></i> Adicionar Primeiro Perfil</button></div></div>`;
+            } else {
+
+                // Show floating action bar if multiple items selected
+                if (state.selectedItems && state.selectedItems.length > 0) {
+                    html += `
+                        <div style="background:var(--purple); color:#fff; padding:10px 16px; border-radius:12px; margin-bottom:16px; display:flex; align-items:center; justify-content:space-between;">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <i data-lucide="check-square" style="width:16px;height:16px"></i>
+                                <span style="font-size:12px;font-weight:700">${state.selectedItems.length} conta(s) selecionada(s)</span>
+                                <span style="font-size:11px;opacity:0.8"> - Arraste-as para uma pasta para mover.</span>
+                            </div>
+                            <button class="btn btn-sm" style="background:rgba(0,0,0,0.3);color:#fff;border:none" onclick="clearSelection('${platform}')">Desmarcar</button>
+                        </div>
+                    `;
+                }
+
+                // Render folders
+                if (folders.length > 0 || state.openFolder !== null) {
+                    html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-bottom:24px">`;
+
+                    // Root folder (To drop items back to main)
+                    if (state.openFolder !== null) {
+                        html += `
+                        <div class="folder-card" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDropOnFolder(event, 'root', '${platform}')" onclick="platformState['${platform}'].openFolder=null; renderPlatformTab('${platform}')">
+                            <div class="folder-icon" style="background:rgba(255,255,255,0.05); color:var(--muted)"><i data-lucide="arrow-left" style="width:24px;height:24px"></i></div>
+                            <div>
+                                <p style="font-size:14px;font-weight:700;color:#fff">Voltar ao Início</p>
+                                <p style="font-size:11px;color:var(--muted)">Solte itens aqui para remover da pasta</p>
+                            </div>
+                        </div>`;
+                    }
+
+                    if (state.openFolder === null) {
+                        folders.forEach(f => {
+                            const fAccounts = accounts.filter(a => a.folderId === f.id);
+                            html += `
+                            <div class="folder-card" 
+                                ondragover="handleDragOver(event)" 
+                                ondragleave="handleDragLeave(event)" 
+                                ondrop="handleDropOnFolder(event, '${f.id}', '${platform}')" 
+                                onclick="platformState['${platform}'].openFolder='${f.id}'; renderPlatformTab('${platform}')">
+                                <div class="folder-icon"><i data-lucide="folder" style="width:24px;height:24px"></i></div>
+                                <div style="flex:1">
+                                    <p style="font-size:14px;font-weight:700;color:#fff">${f.name}</p>
+                                    <p style="font-size:11px;color:var(--muted)">${fAccounts.length} conta(s)</p>
+                                </div>
+                                <button class="btn btn-sm" style="background:none; border:none; color:var(--muted)" onclick="deleteFolder(event, '${f.id}', '${platform}')"><i data-lucide="trash-2" style="width:14px;height:14px"></i></button>
+                            </div>`;
+                        });
+                    }
+                    html += `</div>`;
+                }
+
+                // Profile cards row
+                const displayedAccounts = state.openFolder === null
+                    ? accounts.filter(a => !a.folderId) // main level
+                    : accounts.filter(a => a.folderId === state.openFolder); // inside folder
+
+                let fName = state.openFolder ? (folders.find(x => x.id === state.openFolder)?.name || 'Pasta') : 'Contas Principais';
+
+                html += `<h3 style="font-size:14px;font-weight:700;color:#fff;margin-bottom:12px">${fName}</h3>`;
+
+                if (displayedAccounts.length === 0) {
+                    html += `<p style="font-size:12px;color:var(--muted);margin-bottom:24px">Nenhuma conta nesta view. Adicione ou arraste contas para cá.</p>`;
+                }
+
+                html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:24px">`;
+                displayedAccounts.forEach(account => {
+                    const isSelected = account.id === state.selectedProfile;
+                    const isMultiSelected = state.selectedItems?.includes(account.id);
+                    const hasMetrics = account.metrics && !account.metrics.error;
+                    const followers = hasMetrics ? (account.metrics.subscribers || account.metrics.followers || 0) : 0;
+                    const views = hasMetrics ? (account.metrics.totalRecentViews || 0) : 0;
+                    const vidCount = (account.recentContent || []).length;
+                    html += `
+                <div class="profile-card ${isSelected ? 'selected' : ''} ${isMultiSelected ? 'multi-selected' : ''}" 
+                     id="card-${account.id}" 
+                     draggable="true" 
+                     ondragstart="handleDragStart(event, '${account.id}', '${platform}')" 
+                     ondragend="handleDragEnd(event)"
+                     onclick="platformState['${platform}'].selectedProfile='${account.id}';renderPlatformTab('${platform}')">
+                     
+                    <div class="checkbox-custom ${isMultiSelected ? 'checked' : ''}" onclick="toggleSelect(event, '${platform}', '${account.id}')">
+                        ${isMultiSelected ? '<i data-lucide="check" style="width:12px;height:12px"></i>' : ''}
+                    </div>
+
+                    <div class="avatar" style="padding:0;overflow:hidden">
+                        ${hasMetrics && account.metrics.avatar ? `<img src="${account.metrics.avatar}" style="width:100%;height:100%;object-fit:cover" onerror="this.onerror=null;this.parentElement.innerHTML='${account.handle[0].toUpperCase()}'">` : account.handle[0].toUpperCase()}
+                    </div>
+                    <div style="flex:1;min-width:0">
+                        <div style="display:flex;align-items:center;gap:8px">
+                            <p style="font-size:14px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${account.name || account.handle}</p>
+                            ${isSelected ? '<span style="font-size:8px;background:rgba(0,217,255,.2);color:var(--cyan);padding:2px 6px;border-radius:4px;font-weight:700">ATIVO</span>' : ''}
+                        </div>
+                        <p style="font-size:11px;color:var(--muted)">@${account.handle}</p>
+                        ${hasMetrics ? `<div style="display:flex;gap:12px;margin-top:8px">
+                            <div><p style="font-size:16px;font-weight:700;color:#fff;font-family:'Space Grotesk'">${fmt(followers)}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">${followerLabel}</p></div>
+                            <div><p style="font-size:16px;font-weight:700;color:#fff;font-family:'Space Grotesk'">${fmt(views)}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">views</p></div>
+                            ${platform === 'youtube' && account.metrics.shortCount !== undefined
+                                ? `<div><p style="font-size:16px;font-weight:700;color:var(--cyan);font-family:'Space Grotesk'">${account.metrics.videoCount || 0}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">vídeos</p></div>
+                                   <div><p style="font-size:16px;font-weight:700;color:var(--red);font-family:'Space Grotesk'">${account.metrics.shortCount || 0}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">shorts</p></div>`
+                                : platform === 'facebook' && account.metrics.pageLikes
+                                    ? `<div><p style="font-size:16px;font-weight:700;color:#1877f2;font-family:'Space Grotesk'">${fmt(account.metrics.pageLikes)}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">curtidas</p></div>
+                                       <div><p style="font-size:16px;font-weight:700;color:var(--cyan);font-family:'Space Grotesk'">${vidCount}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">vídeos</p></div>`
+                                    : `<div><p style="font-size:16px;font-weight:700;color:var(--cyan);font-family:'Space Grotesk'">${vidCount}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">vídeos</p></div>`
+                            }
+                        </div>` : '<p style="font-size:10px;color:var(--muted);margin-top:6px">Clique em Buscar para carregar dados</p>'}
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
+                        ${fetchingAccounts.has(account.id)
+                            ? `<button class="btn btn-outline btn-sm" disabled style="font-size:10px;padding:4px 8px" title="Buscando..."><span class="spinner"></span></button>`
+                            : `<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();fetchAccount('${platform}','${account.id}')" id="fetch-btn-${account.id}" style="font-size:10px;padding:4px 8px" title="Atualizar"><i data-lucide="refresh-cw" style="width:11px;height:11px"></i></button>`
+                        }
+                        ${['instagram', 'twitter', 'facebook'].includes(platform) ? `<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();openCookieModal('${platform}','${account.id}', '${btoa(account.cookie || '')}')" style="font-size:10px;padding:4px 8px" title="Editar Cookies"><i data-lucide="key" style="width:11px;height:11px"></i></button>` : ''}
+                        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteAccount('${platform}','${account.id}')" style="font-size:10px;padding:4px 8px" title="Excluir"><i data-lucide="trash-2" style="width:11px;height:11px"></i></button>
+                    </div>
+                </div>`;
+                });
+                html += `</div>`;
+
+                // Video section for selected profile (as previous)
+                if (selected && allVideos.length > 0) {
+                    html += `
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+                    <div>
+                        <h3 style="font-size:16px;font-weight:700;color:#fff">Conteúdo de @${selected.handle}</h3>
+                        <p style="font-size:11px;color:var(--muted)">${videos.length} item${videos.length !== 1 ? 's' : ''} encontrado${videos.length !== 1 ? 's' : ''}</p>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:12px">
+                        ${platform === 'youtube' ? `
+                        <div style="display:flex;background:rgba(255,255,255,.06);border-radius:10px;padding:3px;border:1px solid rgba(255,255,255,.08)">
+                            <button onclick="platformState['${platform}'].contentFilter='all';renderPlatformTab('${platform}')" style="padding:6px 14px;border-radius:8px;border:none;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .2s;${state.contentFilter === 'all' ? 'background:rgba(0,217,255,.15);color:var(--cyan);box-shadow:0 0 8px rgba(0,217,255,.15)' : 'background:transparent;color:var(--muted)'}"><i data-lucide="layout-grid" style="width:13px;height:13px"></i> Todos</button>
+                            <button onclick="platformState['${platform}'].contentFilter='video';renderPlatformTab('${platform}')" style="padding:6px 14px;border-radius:8px;border:none;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .2s;${state.contentFilter === 'video' ? 'background:rgba(0,217,255,.15);color:var(--cyan);box-shadow:0 0 8px rgba(0,217,255,.15)' : 'background:transparent;color:var(--muted)'}"><i data-lucide="play" style="width:13px;height:13px"></i> Vídeos</button>
+                            <button onclick="platformState['${platform}'].contentFilter='short';renderPlatformTab('${platform}')" style="padding:6px 14px;border-radius:8px;border:none;font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .2s;${state.contentFilter === 'short' ? 'background:rgba(255,68,68,.15);color:var(--red);box-shadow:0 0 8px rgba(255,68,68,.15)' : 'background:transparent;color:var(--muted)'}"><i data-lucide="smartphone" style="width:13px;height:13px"></i> Shorts</button>
+                        </div>` : ''}
+                        <div class="sort-dropdown" style="position:relative">
+                            <button onclick="event.stopPropagation();this.parentElement.classList.toggle('open')" style="padding:6px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.06);font-size:11px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;color:var(--cyan);transition:all .2s">
+                                ${{ recent: 'Recentes', views: 'Top Views', oldest: 'Antigos' }[state.sortBy]} <i data-lucide="chevron-down" style="width:12px;height:12px"></i>
+                            </button>
+                            <div class="sort-menu">
+                                <button onclick="platformState['${platform}'].sortBy='recent';renderPlatformTab('${platform}')" class="${state.sortBy === 'recent' ? 'active' : ''}"><i data-lucide="clock" style="width:13px;height:13px"></i> Mais Recentes</button>
+                                <button onclick="platformState['${platform}'].sortBy='views';renderPlatformTab('${platform}')" class="${state.sortBy === 'views' ? 'active' : ''}"><i data-lucide="trending-up" style="width:13px;height:13px"></i> Mais Views</button>
+                                <button onclick="platformState['${platform}'].sortBy='oldest';renderPlatformTab('${platform}')" class="${state.sortBy === 'oldest' ? 'active' : ''}"><i data-lucide="history" style="width:13px;height:13px"></i> Mais Antigos</button>
+                            </div>
+                        </div>
+                        <div class="view-toggle">
+                            <button class="${mode === 'grid' ? 'active' : ''}" onclick="platformState['${platform}'].viewMode='grid';renderPlatformTab('${platform}')" title="Grade"><i data-lucide="grid-3x3" style="width:16px;height:16px"></i></button>
+                            <button class="${mode === 'table' ? 'active' : ''}" onclick="platformState['${platform}'].viewMode='table';renderPlatformTab('${platform}')" title="Tabela"><i data-lucide="list" style="width:16px;height:16px"></i></button>
+                        </div>
+                    </div>
+                </div>`;
+
+                    if (mode === 'grid') {
+                        html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">`;
+                        videos.forEach(v => {
+                            html += `
+                    <div class="vid-card" onclick="window.open('${v.url}','_blank')">
+                        <div class="vid-thumb">
+                            ${v.thumbnail ? `<img src="${v.thumbnail}" alt="" onerror="this.style.display='none'">` : ''}
+                            <i data-lucide="play-circle" style="width:32px;height:32px;color:rgba(255,255,255,.3);position:absolute"></i>
+                            ${v.type === 'short' ? `<span style="position:absolute;top:6px;left:6px;background:var(--red);padding:2px 6px;border-radius:4px;font-size:9px;font-weight:700;color:#fff">SHORT</span>` : ''}
+                            ${v.durationStr || v.duration ? `<span style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,.85);padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">${v.durationStr || fmtDuration(v.duration)}</span>` : ''}
+                        </div>
+                        <div style="padding:12px">
+                            <p style="font-size:12px;font-weight:600;color:#fff;line-height:1.4;margin-bottom:8px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${v.title || 'Sem título'}</p>
+                            <div style="display:flex;gap:10px;font-size:10px;color:var(--muted);flex-wrap:wrap">
+                                <span style="display:flex;align-items:center;gap:3px"><i data-lucide="eye" style="width:12px;height:12px"></i>${fmt(v.views)}</span>
+                                <span style="display:flex;align-items:center;gap:3px"><i data-lucide="heart" style="width:12px;height:12px"></i>${fmt(v.likes)}</span>
+                                <span style="display:flex;align-items:center;gap:3px"><i data-lucide="message-circle" style="width:12px;height:12px"></i>${fmt(v.comments)}</span>
+                                ${v.shares ? `<span style="display:flex;align-items:center;gap:3px"><i data-lucide="share-2" style="width:12px;height:12px"></i>${fmt(v.shares)}</span>` : ''}
+                            </div>
+                        </div>
+                    </div>`;
+                        });
+                        html += `</div>`;
+                    } else {
+                        html += `<div class="glass" style="padding:0;overflow:auto"><table class="video-table"><thead><tr>
+                            <th style="width:100px">Thumb</th><th>Título</th><th style="width:90px">Views</th><th style="width:80px">Likes</th><th style="width:100px">Comentários</th>${videos[0]?.shares !== undefined ? '<th style="width:90px">Shares</th>' : ''}<th style="width:70px">Duração</th>
+                        </tr></thead><tbody>`;
+                        videos.forEach(v => {
+                            html += `<tr class="video-row" onclick="window.open('${v.url}','_blank')">
+                                <td>${v.thumbnail ? `<img src="${v.thumbnail}" class="mini-thumb" onerror="this.style.display='none'">` : '<div class="mini-thumb" style="display:flex;align-items:center;justify-content:center"><i data-lucide="video" style="width:16px;height:16px;color:var(--muted)"></i></div>'}</td>
+                                <td><p style="font-size:12px;font-weight:600;color:#fff;line-height:1.3;max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${v.type === 'short' ? '<span style="background:var(--red);padding:1px 5px;border-radius:3px;font-size:8px;font-weight:700;color:#fff;margin-right:4px">SHORT</span>' : ''}${v.title || 'Sem título'}</p></td>
+                                <td style="font-weight:700;color:#fff;font-family:'Space Grotesk'">${fmt(v.views)}</td>
+                                <td style="font-weight:700;color:var(--red);font-family:'Space Grotesk'">${fmt(v.likes)}</td>
+                                <td style="font-weight:600;color:var(--muted)">${fmt(v.comments)}</td>
+                                ${v.shares !== undefined ? `<td style="font-weight:600;color:var(--cyan)">${fmt(v.shares)}</td>` : ''}
+                                <td style="color:var(--muted);font-size:11px">${v.durationStr || fmtDuration(v.duration) || '—'}</td>
+                            </tr>`;
+                        });
+                        html += `</tbody></table></div>`;
+                    }
+
+                    if (videos.length === 0) {
+                        const filterName = state.contentFilter === 'short' ? 'Shorts' : 'Vídeos longos';
+                        html += `<div class="glass" style="padding:24px;text-align:center"><p style="font-size:12px;color:var(--muted)">Nenhum ${filterName} encontrado para @${selected.handle}.</p></div>`;
+                    }
+
+                } else if (selected && allVideos.length === 0 && selected.metrics) {
+                    html += `<div class="glass" style="padding:24px;text-align:center"><p style="font-size:12px;color:var(--muted)">Nenhum vídeo encontrado para @${selected.handle}. Tente atualizar os dados.</p></div>`;
+                } else if (selected) {
+                    html += `<div class="glass" style="padding:24px;text-align:center"><p style="font-size:12px;color:var(--muted)">Clique no botão de atualizar no perfil de @${selected.handle} para carregar seus vídeos.</p></div>`;
+                }
+            }
+
+            container.innerHTML = html;
+            lucide.createIcons();
+        }
+        // --- Reports ---
+        function renderReports() {
+            const container = document.getElementById('reports-content');
+            let totalAccounts = 0, totalViews = 0, totalFollowers = 0;
+            const platformStats = [];
+
+            for (const [p, accs] of Object.entries(allAccounts)) {
+                let pViews = 0, pFollowers = 0;
+                accs.forEach(a => {
+                    if (a.metrics) {
+                        pViews += a.metrics.totalRecentViews || 0;
+                        pFollowers += a.metrics.subscribers || a.metrics.followers || 0;
+                    }
+                });
+                totalAccounts += accs.length;
+                totalViews += pViews;
+                totalFollowers += pFollowers;
+                if (accs.length > 0) platformStats.push({ platform: p, name: PLATFORMS[p].name, accounts: accs.length, views: pViews, followers: pFollowers });
+            }
+
+            let html = `<div class="bento">
+        <div class="glass" style="padding:24px"><span class="stat-label">Contas Totais</span><p class="stat-value" style="color:var(--cyan);margin-top:12px">${totalAccounts}</p></div>
+        <div class="glass" style="padding:24px"><span class="stat-label">Seguidores Totais</span><p class="stat-value" style="color:#fff;margin-top:12px">${fmt(totalFollowers)}</p></div>
+        <div class="glass" style="padding:24px"><span class="stat-label">Views Recentes</span><p class="stat-value" style="color:#fff;margin-top:12px">${fmt(totalViews)}</p></div>
+        <div class="glass" style="padding:24px"><span class="stat-label">Plataformas</span><p class="stat-value" style="color:var(--green);margin-top:12px">${platformStats.length}</p></div>`;
+
+            if (platformStats.length > 0) {
+                html += `<div class="glass col4" style="padding:24px"><h3 style="font-size:14px;font-weight:700;margin-bottom:16px">Resumo por Plataforma</h3>`;
+                platformStats.forEach(ps => {
+                    html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:12px;border-radius:12px;background:rgba(255,255,255,.03);margin-bottom:8px;border:1px solid rgba(255,255,255,.06)">
+                <div style="display:flex;align-items:center;gap:12px"><div class="stat-icon" style="width:36px;height:36px"><i data-lucide="${PLATFORMS[ps.platform].icon}" style="width:16px;height:16px;color:${PLATFORMS[ps.platform].color}"></i></div><div><p style="font-size:13px;font-weight:600;color:#fff">${ps.name}</p><p style="font-size:10px;color:var(--muted)">${ps.accounts} contas</p></div></div>
+                <div style="display:flex;gap:24px;text-align:right"><div><p style="font-size:14px;font-weight:700;color:#fff;font-family:'Space Grotesk'">${fmt(ps.followers)}</p><p style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">seguidores</p></div><div><p style="font-size:14px;font-weight:700;color:#fff;font-family:'Space Grotesk'">${fmt(ps.views)}</p><p style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">views</p></div></div>
+            </div>`;
+                });
+                html += `</div>`;
+            }
+
+            html += `</div>`;
+            container.innerHTML = html;
+            lucide.createIcons();
+        }
+
+        // --- Tab switching ---
+        function switchTab(id, el) {
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(n => { n.classList.remove('active'); const ic = n.querySelector('.nav-icon'); if (ic) ic.style.color = ''; });
+            document.getElementById(id).classList.add('active');
+            if (el) { el.classList.add('active'); const icon = el.querySelector('.nav-icon'); if (icon) icon.style.color = 'var(--cyan)'; }
+            currentPlatform = id;
+            if (PLATFORMS[id]) renderPlatformTab(id);
+            if (id === 'reports') renderReports();
+        }
+
+        // --- Modal ---
+        let modalPlatform = 'youtube';
+
+        function openAddModal(platform) {
+            modalPlatform = platform;
+            const config = PLATFORMS[platform];
+            document.getElementById('modal-title').textContent = `Adicionar Conta — ${config.name}`;
+            document.getElementById('modal-desc').textContent = `Insira o @handle ou URL do perfil/canal do ${config.name}`;
+            document.getElementById('input-handle').placeholder = config.placeholder;
+            document.getElementById('input-handle').value = '';
+            document.getElementById('input-name').value = '';
+            document.getElementById('input-cookie').value = '';
+            document.getElementById('group-cookie').style.display = ['instagram', 'twitter', 'facebook'].includes(platform) ? 'block' : 'none';
+            document.getElementById('modal-error').style.display = 'none';
+            document.getElementById('modal-add').classList.add('show');
+            setTimeout(() => document.getElementById('input-handle').focus(), 100);
+        }
+
+        function closeModal() {
+            document.getElementById('modal-add').classList.remove('show');
+        }
+
+        async function confirmAddAccount() {
+            const handle = document.getElementById('input-handle').value.trim();
+            const name = document.getElementById('input-name').value.trim();
+            const cookie = document.getElementById('input-cookie').value.trim();
+            const errEl = document.getElementById('modal-error');
+
+            if (!handle) { errEl.textContent = 'Handle é obrigatório'; errEl.style.display = 'block'; return; }
+
+            const btn = document.getElementById('btn-add-confirm');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Adicionando...';
+
+            try {
+                const r = await fetch(`${API}/accounts/${modalPlatform}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ handle, name: name || handle, cookie })
+                });
+                const data = await r.json();
+                if (!r.ok) { errEl.textContent = data.error || 'Erro ao adicionar'; errEl.style.display = 'block'; return; }
+                closeModal();
+                await loadAccounts();
+            } catch (e) {
+                errEl.textContent = 'Servidor offline. Execute: node server.js';
+                errEl.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i data-lucide="plus" style="width:14px;height:14px"></i> Adicionar';
+                lucide.createIcons();
+            }
+        }
+
+        // --- Fetch metrics ---
+        const fetchingAccounts = new Set();
+
+        async function fetchAccount(platform, id) {
+            fetchingAccounts.add(id);
+            const btn = document.getElementById(`fetch-btn-${id}`);
+            if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>'; }
+
+            try {
+                const r = await fetch(`${API}/fetch/${platform}/${id}`, { method: 'POST' });
+
+                const reader = r.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    let boundary = buffer.indexOf('\n');
+
+                    while (boundary !== -1) {
+                        const chunkStr = buffer.slice(0, boundary);
+                        buffer = buffer.slice(boundary + 1);
+                        boundary = buffer.indexOf('\n');
+
+                        try {
+                            const chunk = JSON.parse(chunkStr.trim());
+                            if (chunk.error) {
+                                alert('Erro: ' + chunk.error);
+                                await loadAccounts();
+                                return;
+                            }
+
+                            // Re-render UI on each chunk so user sees data trickling in!
+                            if (chunk.status === 'update' || chunk.status === 'done' || chunk.success) {
+                                await loadAccounts();
+                            }
+                        } catch (e) { }
+                    }
+                }
+            } catch (e) {
+                alert('Erro de conexão com o servidor');
+            } finally {
+                fetchingAccounts.delete(id);
+                await loadAccounts();
+            }
+        }
+
+        async function fetchAllAccounts(platform, folderId) {
+            let accounts = allAccounts[platform] || [];
+            if (folderId) {
+                accounts = accounts.filter(a => a.folderId === folderId);
+            } else if (folderId === null && platformState[platform]?.openFolder === null) {
+                // At root level: update only accounts without a folder
+                // Actually update ALL accounts on the platform when at root
+                // (original behavior)
+            }
+            for (const acc of accounts) {
+                await fetchAccount(platform, acc.id);
+            }
+        }
+
+        async function deleteAccount(platform, id) {
+            if (!confirm('Remover esta conta?')) return;
+            try {
+                await fetch(`${API}/accounts/${platform}/${id}`, { method: 'DELETE' });
+                await loadAccounts();
+            } catch (e) {
+                alert('Erro ao remover');
+            }
+        }
+
+        let cookiePlatform = null;
+        let cookieAccountId = null;
+
+        function openCookieModal(platform, accountId, b64cookie) {
+            cookiePlatform = platform;
+            cookieAccountId = accountId;
+            document.getElementById('input-edit-cookie').value = atob(b64cookie);
+            document.getElementById('modal-cookie').classList.add('show');
+            setTimeout(() => document.getElementById('input-edit-cookie').focus(), 100);
+        }
+
+        async function confirmEditCookie() {
+            const cookie = document.getElementById('input-edit-cookie').value.trim();
+            try {
+                await fetch(`${API}/accounts/${cookiePlatform}/${cookieAccountId}/cookie`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cookie })
+                });
+                document.getElementById('modal-cookie').classList.remove('show');
+                await loadAccounts();
+                alert('Cookies atualizados! Você pode tentar recarregar os dados agora.');
+            } catch (e) {
+                alert('Erro ao salvar cookie: ' + e.message);
+            }
+        }
+
+        // --- Init ---
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+        document.getElementById('modal-add').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal(); });
+        document.addEventListener('click', () => { document.querySelectorAll('.sort-dropdown.open').forEach(d => d.classList.remove('open')); });
+
+        // --- Facebook API Token ---
+        let fbTokenLoaded = false;
+
+        async function openFbTokenModal() {
+            document.getElementById('modal-fb-token').classList.add('show');
+            const statusEl = document.getElementById('fb-token-status');
+            statusEl.style.display = 'none';
+            try {
+                const r = await fetch(API + '/settings/facebook-token');
+                const data = await r.json();
+                if (data.hasToken) {
+                    document.getElementById('input-fb-token').placeholder = `Token atual: ${data.token} (cole um novo para substituir)`;
+                    document.getElementById('btn-remove-fb-token').style.display = 'inline-flex';
+                } else {
+                    document.getElementById('input-fb-token').placeholder = 'Cole seu token de acesso aqui';
+                    document.getElementById('btn-remove-fb-token').style.display = 'none';
+                }
+            } catch (e) { }
+            lucide.createIcons();
+            setTimeout(() => document.getElementById('input-fb-token').focus(), 100);
+        }
+
+        async function saveFbToken() {
+            const token = document.getElementById('input-fb-token').value.trim();
+            const statusEl = document.getElementById('fb-token-status');
+            if (!token) {
+                statusEl.textContent = 'Cole o token antes de salvar.';
+                statusEl.style.color = 'var(--red)';
+                statusEl.style.display = 'block';
+                return;
+            }
+            try {
+                // Quick validation: try to call /me with the token
+                statusEl.textContent = 'Validando token...';
+                statusEl.style.color = 'var(--cyan)';
+                statusEl.style.display = 'block';
+
+                const testRes = await fetch(`https://graph.facebook.com/v21.0/me?access_token=${token}`);
+                const testData = await testRes.json();
+                if (testData.error) {
+                    statusEl.textContent = `Token inválido: ${testData.error.message}`;
+                    statusEl.style.color = 'var(--red)';
+                    return;
+                }
+
+                await fetch(API + '/settings/facebook-token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token })
+                });
+                document.getElementById('modal-fb-token').classList.remove('show');
+                document.getElementById('input-fb-token').value = '';
+                fbTokenLoaded = true;
+                updateFbApiButton(true);
+                alert('Token salvo com sucesso! Agora você pode buscar dados das páginas do Facebook.');
+            } catch (e) {
+                statusEl.textContent = 'Erro ao salvar: ' + e.message;
+                statusEl.style.color = 'var(--red)';
+                statusEl.style.display = 'block';
+            }
+        }
+
+        async function removeFbToken() {
+            if (!confirm('Remover o token da API do Facebook?')) return;
+            await fetch(API + '/settings/facebook-token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: '' })
+            });
+            document.getElementById('modal-fb-token').classList.remove('show');
+            fbTokenLoaded = false;
+            updateFbApiButton(false);
+        }
+
+        function updateFbApiButton(hasToken) {
+            const label = document.getElementById('fb-api-btn-label');
+            if (label) label.textContent = hasToken ? 'API Conectada ✓' : 'Configurar API';
+        }
+
+        async function checkFbToken() {
+            try {
+                const r = await fetch(API + '/settings/facebook-token');
+                const data = await r.json();
+                fbTokenLoaded = data.hasToken;
+                updateFbApiButton(data.hasToken);
+            } catch (e) { }
+        }
+
+        // --- Init ---
+        (async function init() {
+            lucide.createIcons();
+            await checkServer();
+            await loadAccounts();
+            await checkFbToken();
+            setInterval(checkServer, 15000);
+        })();
+    </script>
+</body>
+
+</html>
