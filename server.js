@@ -298,95 +298,183 @@ app.post('/api/fetch/:platform/:id', async (req, res) => {
             let subscriberCount = 0;
             let avatarUrl = null;
 
-            // Fetch videos, shorts and avatar ALL concurrently for maximum speed
-            const [videoEntries, shortEntries, channelHtml] = await Promise.all([
-                extractPlaylist(url + '/videos', 30).catch(() => []),
-                extractPlaylist(url + '/shorts', 30).catch(() => []),
-                fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36' } })
-                    .then(r => r.text()).catch(() => '')
-            ]);
-
-            // Parse avatar
-            const avatarMatch = channelHtml.match(/<meta property="og:image" content="([^"]+)">/i) || channelHtml.match(/"avatar":\{"thumbnails":\[\{"url":"([^"]+)"/i);
-            if (avatarMatch) {
-                avatarUrl = avatarMatch[1].replace(/\\u002F/g, '/').replace(/=s\d+-/i, '=s176-');
+            // Helper: extract full video details from a channel tab using yt-dlp (no --flat-playlist)
+            // This returns complete metadata for each video in a single call
+            async function extractFullPlaylist(tabUrl, maxItems = 30, timeout = 120000) {
+                const args = [
+                    '--dump-json',
+                    '--no-download',
+                    '--no-warnings',
+                    '--playlist-end', String(maxItems),
+                    '--extractor-args', 'youtube:skip=dash,hls',
+                    '--skip-download',
+                    tabUrl
+                ];
+                try {
+                    const output = await runYtDlp(args, timeout);
+                    return output.trim().split('\n').filter(Boolean).map(line => {
+                        try { return JSON.parse(line); } catch { return null; }
+                    }).filter(Boolean);
+                } catch (e) {
+                    console.error(`  [YouTube] Full playlist extraction failed for ${tabUrl}: ${e.message}`);
+                    return [];
+                }
             }
 
-            // Tag and merge entries, deduplicating by id
-            const seen = new Set();
-            const allEntries = [];
-            for (const e of videoEntries) { if (!seen.has(e.id)) { seen.add(e.id); allEntries.push({ ...e, _type: 'video' }); } }
-            for (const e of shortEntries) { if (!seen.has(e.id)) { seen.add(e.id); allEntries.push({ ...e, _type: 'short' }); } }
+            console.log(`  [YouTube] Extracting videos and shorts with full metadata...`);
 
-            console.log(`  [YouTube] Found ${videoEntries.length} videos + ${shortEntries.length} shorts = ${allEntries.length} total, fetching in batches...`);
-
-            // Initialize early avatar/metrics to UI
+            // Initialize UI with early progress
             account.metrics.avatar = avatarUrl;
             account.metrics.subscribers = subscriberCount;
             saveDB(db);
             res.write(JSON.stringify({ status: 'update', progress: 0 }) + '\n');
 
-            // Get detailed info for ALL content (videos + shorts) in concurrent batches of 10
-            await processInBatches(allEntries, 10, async (entry) => {
+            // Fetch full video details for videos and shorts concurrently
+            // Each call returns complete metadata (views, likes, comments, subscriber count, etc.)
+            const [videoResults, shortResults] = await Promise.all([
+                extractFullPlaylist(url + '/videos', 30, 180000),
+                extractFullPlaylist(url + '/shorts', 30, 180000)
+            ]);
+
+            console.log(`  [YouTube] Got ${videoResults.length} videos + ${shortResults.length} shorts with full details`);
+            res.write(JSON.stringify({ status: 'update', progress: 30 }) + '\n');
+
+            // Tag entries
+            const allResults = [
+                ...videoResults.map(v => ({ ...v, _type: 'video' })),
+                ...shortResults.map(v => ({ ...v, _type: 'short' }))
+            ];
+
+            // Deduplicate by id
+            const seen = new Set();
+            const uniqueResults = [];
+            for (const info of allResults) {
+                const vid = info.id;
+                if (vid && !seen.has(vid)) {
+                    seen.add(vid);
+                    uniqueResults.push(info);
+                }
+            }
+
+            // Process all results — no extra yt-dlp calls needed!
+            for (let i = 0; i < uniqueResults.length; i++) {
+                const info = uniqueResults[i];
+                const isShort = info._type === 'short';
+                const contentUrl = isShort
+                    ? `https://www.youtube.com/shorts/${info.id}`
+                    : `https://www.youtube.com/watch?v=${info.id}`;
+
+                const views = info.view_count || 0;
+                const likes = info.like_count || 0;
+                const comments = info.comment_count || 0;
+
+                // Extract subscriber count and avatar from video metadata
+                if (info.channel_follower_count && info.channel_follower_count > subscriberCount) {
+                    subscriberCount = info.channel_follower_count;
+                }
+                if (!avatarUrl && info.thumbnails) {
+                    // yt-dlp sometimes includes channel avatar in thumbnails
+                    // Also check for channel_url to build avatar
+                }
+                // Uploader avatar from channel metadata
+                if (!avatarUrl && info.uploader_url) {
+                    // Will be picked up from channel_follower_count metadata
+                }
+
+                totalViews += views;
+                totalLikes += likes;
+                totalComments += comments;
+
+                account.recentContent.push({
+                    id: info.id,
+                    title: info.title || info.fulltitle || `Video #${i + 1}`,
+                    url: contentUrl,
+                    thumbnail: info.thumbnail,
+                    views,
+                    likes,
+                    comments,
+                    duration: info.duration,
+                    durationStr: info.duration_string,
+                    uploadDate: info.upload_date,
+                    description: (info.description || '').slice(0, 200),
+                    type: isShort ? 'short' : 'video'
+                });
+
+                // Update progress every 10 items
+                if ((i + 1) % 10 === 0 || i === uniqueResults.length - 1) {
+                    const progress = 30 + Math.round(((i + 1) / uniqueResults.length) * 50);
+                    res.write(JSON.stringify({ status: 'update', progress }) + '\n');
+                }
+            }
+
+            // Try to get avatar from channel page via yt-dlp (single call, extracts just channel info)
+            if (!avatarUrl) {
                 try {
-                    const contentUrl = entry._type === 'short'
-                        ? `https://www.youtube.com/shorts/${entry.id}`
-                        : `https://www.youtube.com/watch?v=${entry.id}`;
-                    const info = await extractInfo(contentUrl);
-                    return { entry, info };
+                    // Use --playlist-items 0 to get channel metadata without downloading any videos
+                    const channelArgs = [
+                        '--dump-json',
+                        '--no-download',
+                        '--no-warnings',
+                        '--playlist-items', '0',
+                        '--skip-download',
+                        url
+                    ];
+                    const channelOutput = await runYtDlp(channelArgs, 30000).catch(() => '');
+                    if (channelOutput.trim()) {
+                        const channelInfo = JSON.parse(channelOutput.trim().split('\n')[0]);
+                        if (channelInfo.thumbnails && channelInfo.thumbnails.length > 0) {
+                            // Get the highest resolution thumbnail as avatar
+                            const avatarThumb = channelInfo.thumbnails.find(t => t.url && t.url.includes('avatar'))
+                                || channelInfo.thumbnails[channelInfo.thumbnails.length - 1];
+                            if (avatarThumb) avatarUrl = avatarThumb.url;
+                        }
+                        if (channelInfo.channel_follower_count && channelInfo.channel_follower_count > subscriberCount) {
+                            subscriberCount = channelInfo.channel_follower_count;
+                        }
+                    }
                 } catch (e) {
-                    console.error(`  [${entry._type === 'short' ? 'Short' : 'Video'} Error] ${entry.id}:`, e.message);
-                    return null;
+                    console.log(`  [YouTube] Channel metadata extraction failed: ${e.message}`);
                 }
-            }, async (batchResults, currentCount, totalCount) => {
-                for (const resItem of batchResults) {
-                    if (!resItem) continue;
-                    const { entry, info } = resItem;
-                    const isShort = entry._type === 'short';
-                    const contentUrl = isShort
-                        ? `https://www.youtube.com/shorts/${entry.id}`
-                        : `https://www.youtube.com/watch?v=${entry.id}`;
-                    const views = info.view_count || 0;
-                    const likes = info.like_count || 0;
-                    const comments = info.comment_count || 0;
+            }
 
-                    if (info.channel_follower_count) subscriberCount = info.channel_follower_count;
+            // Fallback: try fetching avatar from channel HTML page
+            if (!avatarUrl) {
+                try {
+                    const channelHtml = await fetch(url, {
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                            'Accept-Language': 'en-US,en;q=0.9'
+                        },
+                        signal: AbortSignal.timeout(10000)
+                    }).then(r => r.text()).catch(() => '');
 
-                    totalViews += views;
-                    totalLikes += likes;
-                    totalComments += comments;
-
-                    account.recentContent.push({
-                        id: info.id,
-                        title: info.title,
-                        url: contentUrl,
-                        thumbnail: info.thumbnail,
-                        views,
-                        likes,
-                        comments,
-                        duration: info.duration,
-                        durationStr: info.duration_string,
-                        uploadDate: info.upload_date,
-                        description: (info.description || '').slice(0, 200),
-                        type: isShort ? 'short' : 'video'
-                    });
+                    const avatarMatch = channelHtml.match(/<meta property="og:image" content="([^"]+)">/i)
+                        || channelHtml.match(/"avatar":\{"thumbnails":\[\{"url":"([^"]+)"/i);
+                    if (avatarMatch) {
+                        avatarUrl = avatarMatch[1].replace(/\\u002F/g, '/').replace(/=s\d+-/i, '=s176-');
+                    }
+                } catch (e) {
+                    console.log(`  [YouTube] HTML avatar fallback failed: ${e.message}`);
                 }
+            }
 
-                const engagementRate = totalViews > 0 ? ((totalLikes + totalComments) / totalViews * 100).toFixed(2) : 0;
-                account.metrics = {
-                    avatar: avatarUrl,
-                    subscribers: subscriberCount,
-                    totalRecentViews: totalViews,
-                    totalRecentLikes: totalLikes,
-                    totalRecentComments: totalComments,
-                    engagementRate: parseFloat(engagementRate),
-                    videoCount: account.recentContent.filter(c => c.type === 'video').length,
-                    shortCount: account.recentContent.filter(c => c.type === 'short').length,
-                    totalCount: account.recentContent.length
-                };
-                saveDB(db);
-                res.write(JSON.stringify({ status: 'update', progress: Math.round((currentCount / totalCount) * 100) }) + '\n');
-            });
+            // Final metrics update
+            const engagementRate = totalViews > 0 ? ((totalLikes + totalComments) / totalViews * 100).toFixed(2) : 0;
+            account.metrics = {
+                avatar: avatarUrl,
+                subscribers: subscriberCount,
+                totalRecentViews: totalViews,
+                totalRecentLikes: totalLikes,
+                totalRecentComments: totalComments,
+                engagementRate: parseFloat(engagementRate),
+                videoCount: account.recentContent.filter(c => c.type === 'video').length,
+                shortCount: account.recentContent.filter(c => c.type === 'short').length,
+                totalCount: account.recentContent.length
+            };
+            saveDB(db);
+            res.write(JSON.stringify({ status: 'update', progress: 100 }) + '\n');
+
+            console.log(`  [YouTube] Done: ${fmt(subscriberCount)} subs, ${account.recentContent.length} content items, ${fmt(totalViews)} total views`);
 
         } else if (platform === 'tiktok') {
             // Fetch up to 40 videos from TikTok profile to get comprehensive metrics
