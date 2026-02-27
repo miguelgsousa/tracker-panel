@@ -1321,7 +1321,7 @@ app.post('/api/verify/:platform', async (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n╔══════════════════════════════════════════╗`);
     console.log(`║  Social Tracker Server running!          ║`);
     console.log(`║  http://localhost:${PORT}                    ║`);
