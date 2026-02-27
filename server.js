@@ -454,45 +454,152 @@ app.post('/api/fetch/:platform/:id', async (req, res) => {
                 }
             }
 
-            // Get subscriber count + avatar: extract one video's full info (includes channel_follower_count)
+            // Get subscriber count + avatar using Puppeteer (most reliable — renders like a real browser)
             if (!subscriberCount || !avatarUrl) {
-                const firstVideoId = uniqueResults[0]?.id;
-                if (firstVideoId) {
-                    try {
-                        console.log(`  [YouTube] Fetching channel metadata from video ${firstVideoId}...`);
-                        const videoUrl = `https://www.youtube.com/watch?v=${firstVideoId}`;
-                        const args = [
-                            '--dump-json',
-                            '--no-download',
-                            '--no-warnings',
-                            '--no-playlist',
-                            '--extractor-args', 'youtube:skip=dash,hls',
-                            ...browserCookieArgs,
-                            videoUrl
-                        ];
-                        const output = await runYtDlp(args, 30000);
-                        const videoInfo = JSON.parse(output.trim().split('\n')[0]);
+                let browser = null;
+                try {
+                    console.log(`  [YouTube] Fetching channel info via Puppeteer...`);
+                    browser = await puppeteer.launch({
+                        executablePath: CHROME_PATH,
+                        headless: 'new',
+                        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+                            '--disable-gpu', '--disable-extensions', '--no-first-run']
+                    });
+                    const page = await browser.newPage();
+                    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-                        if (videoInfo.channel_follower_count && videoInfo.channel_follower_count > subscriberCount) {
-                            subscriberCount = videoInfo.channel_follower_count;
-                            console.log(`  [YouTube] Subscribers: ${fmt(subscriberCount)}`);
+                    // Navigate to channel page
+                    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+
+                    // Wait a moment for initial data to be available
+                    await new Promise(r => setTimeout(r, 2000));
+
+                    // Extract ytInitialData which contains subscriber count and avatar
+                    const channelData = await page.evaluate(() => {
+                        const result = { subscribers: 0, avatar: null, name: null };
+
+                        // Try to get data from ytInitialData (embedded in page scripts)
+                        try {
+                            const scripts = document.querySelectorAll('script');
+                            for (const script of scripts) {
+                                const text = script.textContent || '';
+                                if (text.includes('ytInitialData')) {
+                                    const match = text.match(/var\s+ytInitialData\s*=\s*(\{[\s\S]*?\});/);
+                                    if (match) {
+                                        const data = JSON.parse(match[1]);
+
+                                        // Navigate to header for subscriber count
+                                        const header = data?.header?.c4TabbedHeaderRenderer
+                                            || data?.header?.pageHeaderRenderer;
+
+                                        if (header) {
+                                            // c4TabbedHeaderRenderer format
+                                            const subText = header.subscriberCountText?.simpleText
+                                                || header.subscriberCountText?.runs?.map(r => r.text).join('');
+                                            if (subText) {
+                                                result.subscriberText = subText;
+                                            }
+
+                                            // Avatar
+                                            const avatarThumbs = header.avatar?.thumbnails;
+                                            if (avatarThumbs && avatarThumbs.length > 0) {
+                                                result.avatar = avatarThumbs[avatarThumbs.length - 1].url;
+                                            }
+
+                                            result.name = header.title;
+                                        }
+
+                                        // pageHeaderRenderer format (newer)
+                                        if (!result.subscriberText) {
+                                            const metadata = data?.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.metadata?.contentMetadataViewModel?.metadataRows;
+                                            if (metadata) {
+                                                for (const row of metadata) {
+                                                    for (const part of (row.metadataParts || [])) {
+                                                        const t = part.text?.content || '';
+                                                        if (t.includes('subscriber') || t.includes('inscrito')) {
+                                                            result.subscriberText = t;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            // Avatar from pageHeaderRenderer
+                                            const imgModel = data?.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.image?.decoratedAvatarViewModel?.avatar?.avatarViewModel?.image?.sources;
+                                            if (imgModel && imgModel.length > 0) {
+                                                result.avatar = imgModel[imgModel.length - 1].url;
+                                            }
+                                        }
+
+                                        break;
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            // Silent
                         }
 
-                        // Try to get avatar from video's channel info
-                        if (!avatarUrl && videoInfo.thumbnails) {
-                            const avatarThumb = videoInfo.thumbnails.find(t => t.url && t.url.includes('avatar'));
-                            if (avatarThumb) avatarUrl = avatarThumb.url;
+                        // Fallback: try window.ytInitialData directly
+                        if (!result.subscriberText && window.ytInitialData) {
+                            try {
+                                const data = window.ytInitialData;
+                                const header = data?.header?.c4TabbedHeaderRenderer || data?.header?.pageHeaderRenderer;
+                                if (header) {
+                                    const subText = header.subscriberCountText?.simpleText
+                                        || header.subscriberCountText?.runs?.map(r => r.text).join('');
+                                    if (subText) result.subscriberText = subText;
+
+                                    const avatarThumbs = header.avatar?.thumbnails;
+                                    if (avatarThumbs && avatarThumbs.length > 0) {
+                                        result.avatar = avatarThumbs[avatarThumbs.length - 1].url;
+                                    }
+                                }
+                            } catch (e) { }
                         }
-                    } catch (e) {
-                        console.log(`  [YouTube] Channel metadata from video failed: ${e.message.substring(0, 100)}`);
+
+                        // Fallback: try meta tags
+                        if (!result.avatar) {
+                            const ogImg = document.querySelector('meta[property="og:image"]');
+                            if (ogImg) result.avatar = ogImg.getAttribute('content');
+                        }
+
+                        // Fallback: try reading subscriber text from DOM
+                        if (!result.subscriberText) {
+                            const subEl = document.querySelector('#subscriber-count, .yt-subscription-button-subscriber-count-branded-horizontal, [id*="subscriber"]');
+                            if (subEl) result.subscriberText = subEl.textContent.trim();
+                        }
+
+                        return result;
+                    });
+
+                    // Parse subscriber text to number
+                    if (channelData.subscriberText) {
+                        // Parse strings like "15.6K subscribers", "1.2M inscritos", "500 subscribers"
+                        const subStr = channelData.subscriberText.replace(/subscribers?|inscritos?/gi, '').trim();
+                        const parsed = subStr.match(/([\d.,]+)\s*([KMBkmb])?/);
+                        if (parsed) {
+                            let n = parseFloat(parsed[1].replace(',', '.'));
+                            const suffix = (parsed[2] || '').toUpperCase();
+                            if (suffix === 'K') n *= 1000;
+                            else if (suffix === 'M') n *= 1000000;
+                            else if (suffix === 'B') n *= 1000000000;
+                            subscriberCount = Math.round(n);
+                        }
+                        console.log(`  [YouTube] Puppeteer subscribers: "${channelData.subscriberText}" → ${fmt(subscriberCount)}`);
                     }
+
+                    if (channelData.avatar && !avatarUrl) {
+                        avatarUrl = channelData.avatar;
+                        console.log(`  [YouTube] Puppeteer avatar: found`);
+                    }
+
+                } catch (e) {
+                    console.log(`  [YouTube] Puppeteer channel scrape failed: ${e.message.substring(0, 150)}`);
+                } finally {
+                    if (browser) await browser.close().catch(() => { });
                 }
             }
 
-            res.write(JSON.stringify({ status: 'update', progress: 80 }) + '\n');
-
-            // Fallback: try fetching avatar + subs from channel HTML page
-            if (!avatarUrl || !subscriberCount) {
+            // Last resort fallback: simple HTML fetch for avatar only
+            if (!avatarUrl) {
                 try {
                     const channelHtml = await fetch(url, {
                         headers: {
@@ -502,23 +609,13 @@ app.post('/api/fetch/:platform/:id', async (req, res) => {
                         signal: AbortSignal.timeout(10000)
                     }).then(r => r.text()).catch(() => '');
 
-                    if (!avatarUrl) {
-                        const avatarMatch = channelHtml.match(/<meta property="og:image" content="([^"]+)">/i)
-                            || channelHtml.match(/"avatar":\{"thumbnails":\[\{"url":"([^"]+)"/i);
-                        if (avatarMatch) {
-                            avatarUrl = avatarMatch[1].replace(/\\u002F/g, '/').replace(/=s\d+-/i, '=s176-');
-                        }
-                    }
-
-                    if (!subscriberCount) {
-                        const subMatch = channelHtml.match(/"subscriberCountText":\{"simpleText":"([^"]+)"/i)
-                            || channelHtml.match(/"subscriberCountText":\{[^}]*"content":"([^"]+)"/i);
-                        if (subMatch) {
-                            subscriberCount = parseMetricStr(subMatch[1]);
-                        }
+                    const avatarMatch = channelHtml.match(/<meta property="og:image" content="([^"]+)">/i)
+                        || channelHtml.match(/"avatar":\{"thumbnails":\[\{"url":"([^"]+)"/i);
+                    if (avatarMatch) {
+                        avatarUrl = avatarMatch[1].replace(/\\u002F/g, '/').replace(/=s\d+-/i, '=s176-');
                     }
                 } catch (e) {
-                    console.log(`  [YouTube] HTML fallback failed: ${e.message}`);
+                    console.log(`  [YouTube] HTML avatar fallback failed: ${e.message}`);
                 }
             }
 
