@@ -319,6 +319,66 @@
             box-shadow: 0 0 20px rgba(0, 217, 255, .2);
         }
 
+        .folder-card.folder-dragging {
+            opacity: 0.4;
+            transform: scale(0.95);
+        }
+
+        .folder-card .folder-actions {
+            display: flex;
+            gap: 2px;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .folder-card .folder-actions button {
+            background: none;
+            border: none;
+            color: var(--muted);
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 6px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .folder-card .folder-actions button:hover {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .folder-drag-handle {
+            cursor: grab;
+            color: var(--muted);
+            opacity: 0.5;
+            transition: opacity 0.2s;
+            display: flex;
+            align-items: center;
+        }
+
+        .folder-drag-handle:hover {
+            opacity: 1;
+        }
+
+        .folder-drag-handle:active {
+            cursor: grabbing;
+        }
+
+        .folder-drop-indicator {
+            border: 2px dashed var(--cyan);
+            border-radius: 14px;
+            background: rgba(0, 217, 255, .08);
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--cyan);
+            font-size: 11px;
+            font-weight: 600;
+        }
+
         .folder-icon {
             width: 48px;
             height: 48px;
@@ -1218,11 +1278,11 @@
     </div>
 
 
-    <!-- Add Folder Modal -->
+    <!-- Add/Edit Folder Modal -->
     <div class="modal-overlay" id="modal-folder">
         <div class="modal">
-            <h2>Nova Pasta</h2>
-            <p>Agrupe suas contas em pastas</p>
+            <h2 id="modal-folder-title">Nova Pasta</h2>
+            <p id="modal-folder-desc">Agrupe suas contas em pastas</p>
             <div class="input-group">
                 <label>Nome da Pasta</label>
                 <input type="text" id="input-folder-name" placeholder="Ex: Clientes, Concorrentes...">
@@ -1230,7 +1290,8 @@
             <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:24px">
                 <button class="btn btn-outline"
                     onclick="document.getElementById('modal-folder').classList.remove('show')">Cancelar</button>
-                <button class="btn btn-primary" onclick="confirmAddFolder()">Criar Pasta</button>
+                <button class="btn btn-primary" id="btn-folder-confirm" onclick="confirmFolderAction()">Criar
+                    Pasta</button>
             </div>
         </div>
     </div>
@@ -1492,21 +1553,57 @@
             }
         }
 
+        // --- Folder Modal (create & edit) ---
+        let editingFolderId = null;
+
         function openFolderModal(platform) {
             modalPlatform = platform;
+            editingFolderId = null;
             document.getElementById('input-folder-name').value = '';
+            document.getElementById('modal-folder-title').textContent = 'Nova Pasta';
+            document.getElementById('modal-folder-desc').textContent = 'Agrupe suas contas em pastas';
+            document.getElementById('btn-folder-confirm').textContent = 'Criar Pasta';
             document.getElementById('modal-folder').classList.add('show');
             setTimeout(() => document.getElementById('input-folder-name').focus(), 100);
         }
 
-        async function confirmAddFolder() {
+        function openEditFolderModal(e, folderId, platform) {
+            e.stopPropagation();
+            modalPlatform = platform;
+            editingFolderId = folderId;
+            const folders = allFolders[platform] || [];
+            const folder = folders.find(f => f.id === folderId);
+            document.getElementById('input-folder-name').value = folder ? folder.name : '';
+            document.getElementById('modal-folder-title').textContent = 'Editar Pasta';
+            document.getElementById('modal-folder-desc').textContent = 'Altere o nome da pasta';
+            document.getElementById('btn-folder-confirm').textContent = 'Salvar';
+            document.getElementById('modal-folder').classList.add('show');
+            setTimeout(() => {
+                const inp = document.getElementById('input-folder-name');
+                inp.focus();
+                inp.select();
+            }, 100);
+        }
+
+        async function confirmFolderAction() {
             const name = document.getElementById('input-folder-name').value.trim();
             if (!name) return;
-            await fetch(`${API}/folders/${modalPlatform}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name })
-            });
+            if (editingFolderId) {
+                // Rename
+                await fetch(`${API}/folders/${modalPlatform}/${editingFolderId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name })
+                });
+            } else {
+                // Create
+                await fetch(`${API}/folders/${modalPlatform}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name })
+                });
+            }
+            editingFolderId = null;
             document.getElementById('modal-folder').classList.remove('show');
             await loadAccounts();
         }
@@ -1515,6 +1612,74 @@
             e.stopPropagation();
             if (!confirm('Apagar esta pasta? As contas nela não serão apagadas, voltarão para a principal.')) return;
             await fetch(`${API}/folders/${platform}/${folderId}`, { method: 'DELETE' });
+            await loadAccounts();
+        }
+
+        // --- Folder Drag Reorder ---
+        let draggedFolderId = null;
+        let draggedFolderPlatform = null;
+
+        function handleFolderDragStart(e, folderId, platform) {
+            e.stopPropagation();
+            draggedFolderId = folderId;
+            draggedFolderPlatform = platform;
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', folderId);
+            setTimeout(() => {
+                const el = document.getElementById('folder-' + folderId);
+                if (el) el.classList.add('folder-dragging');
+            }, 0);
+        }
+
+        function handleFolderDragEnd(e) {
+            if (draggedFolderId) {
+                const el = document.getElementById('folder-' + draggedFolderId);
+                if (el) el.classList.remove('folder-dragging');
+            }
+            draggedFolderId = null;
+            draggedFolderPlatform = null;
+            // Remove all folder drag-over indicators
+            document.querySelectorAll('.folder-card.drag-over').forEach(el => el.classList.remove('drag-over'));
+        }
+
+        function handleFolderDragOver(e, targetFolderId) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!draggedFolderId || draggedFolderId === targetFolderId) return;
+            e.dataTransfer.dropEffect = 'move';
+            // Only show drag-over on the target
+            document.querySelectorAll('.folder-card.drag-over').forEach(el => el.classList.remove('drag-over'));
+            e.currentTarget.classList.add('drag-over');
+        }
+
+        function handleFolderDragLeave(e) {
+            e.currentTarget.classList.remove('drag-over');
+        }
+
+        async function handleFolderDrop(e, targetFolderId, platform) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.currentTarget.classList.remove('drag-over');
+            if (!draggedFolderId || draggedFolderId === targetFolderId) return;
+
+            const folders = allFolders[platform] || [];
+            const currentOrder = folders.map(f => f.id);
+            const fromIdx = currentOrder.indexOf(draggedFolderId);
+            const toIdx = currentOrder.indexOf(targetFolderId);
+            if (fromIdx === -1 || toIdx === -1) return;
+
+            // Move item
+            currentOrder.splice(fromIdx, 1);
+            currentOrder.splice(toIdx, 0, draggedFolderId);
+
+            await fetch(`${API}/folders/${platform}/reorder`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ order: currentOrder })
+            });
+
+            draggedFolderId = null;
+            draggedFolderPlatform = null;
             await loadAccounts();
         }
 
@@ -1612,17 +1777,26 @@
                         folders.forEach(f => {
                             const fAccounts = accounts.filter(a => a.folderId === f.id);
                             html += `
-                            <div class="folder-card" 
-                                ondragover="handleDragOver(event)" 
-                                ondragleave="handleDragLeave(event)" 
-                                ondrop="handleDropOnFolder(event, '${f.id}', '${platform}')" 
+                            <div class="folder-card" id="folder-${f.id}"
+                                draggable="true"
+                                ondragstart="handleFolderDragStart(event, '${f.id}', '${platform}')"
+                                ondragend="handleFolderDragEnd(event)"
+                                ondragover="draggedFolderId ? handleFolderDragOver(event, '${f.id}') : handleDragOver(event)" 
+                                ondragleave="draggedFolderId ? handleFolderDragLeave(event) : handleDragLeave(event)" 
+                                ondrop="draggedFolderId ? handleFolderDrop(event, '${f.id}', '${platform}') : handleDropOnFolder(event, '${f.id}', '${platform}')" 
                                 onclick="platformState['${platform}'].openFolder='${f.id}'; renderPlatformTab('${platform}')">
+                                <div class="folder-drag-handle" title="Arrastar para reordenar">
+                                    <i data-lucide="grip-vertical" style="width:16px;height:16px"></i>
+                                </div>
                                 <div class="folder-icon"><i data-lucide="folder" style="width:24px;height:24px"></i></div>
-                                <div style="flex:1">
-                                    <p style="font-size:14px;font-weight:700;color:#fff">${f.name}</p>
+                                <div style="flex:1;min-width:0">
+                                    <p style="font-size:14px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${f.name}</p>
                                     <p style="font-size:11px;color:var(--muted)">${fAccounts.length} conta(s)</p>
                                 </div>
-                                <button class="btn btn-sm" style="background:none; border:none; color:var(--muted)" onclick="deleteFolder(event, '${f.id}', '${platform}')"><i data-lucide="trash-2" style="width:14px;height:14px"></i></button>
+                                <div class="folder-actions">
+                                    <button onclick="openEditFolderModal(event, '${f.id}', '${platform}')" title="Renomear pasta"><i data-lucide="pencil" style="width:14px;height:14px"></i></button>
+                                    <button onclick="deleteFolder(event, '${f.id}', '${platform}')" title="Apagar pasta" style="color:var(--red)"><i data-lucide="trash-2" style="width:14px;height:14px"></i></button>
+                                </div>
                             </div>`;
                         });
                     }

@@ -204,6 +204,46 @@ app.delete('/api/folders/:platform/:id', (req, res) => {
     res.json({ success: true });
 });
 
+// PATCH rename folder
+app.patch('/api/folders/:platform/:id', (req, res) => {
+    const { platform, id } = req.params;
+    const { name } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
+    const db = loadDB();
+    const folder = (db._folders?.[platform] || []).find(f => f.id === id);
+    if (!folder) return res.status(404).json({ error: 'Folder not found' });
+    folder.name = name.trim();
+    saveDB(db);
+    res.json(folder);
+});
+
+// PUT reorder folders
+app.put('/api/folders/:platform/reorder', (req, res) => {
+    const { platform } = req.params;
+    const { order } = req.body; // array of folder IDs in new order
+    if (!Array.isArray(order)) return res.status(400).json({ error: 'Order must be an array of folder IDs' });
+    const db = loadDB();
+    if (!db._folders?.[platform]) return res.status(404).json({ error: 'Platform not found' });
+    const currentFolders = db._folders[platform];
+    const folderMap = {};
+    currentFolders.forEach(f => { folderMap[f.id] = f; });
+    // Rebuild array in the new order, append any missing folders at the end
+    const reordered = [];
+    for (const id of order) {
+        if (folderMap[id]) {
+            reordered.push(folderMap[id]);
+            delete folderMap[id];
+        }
+    }
+    // Append any folders not in the order array (safety)
+    for (const f of Object.values(folderMap)) {
+        reordered.push(f);
+    }
+    db._folders[platform] = reordered;
+    saveDB(db);
+    res.json({ success: true, folders: reordered });
+});
+
 
 // GET all accounts
 app.get('/api/accounts', (req, res) => {
