@@ -454,11 +454,156 @@ app.post('/api/fetch/:platform/:id', async (req, res) => {
                 }
             }
 
-            // Get subscriber count + avatar using Puppeteer (most reliable — renders like a real browser)
+            // --- Helper: parse ytInitialData to extract subscriber count + avatar ---
+            function parseYtInitialData(data) {
+                const result = { subscriberText: null, avatar: null, name: null };
+                try {
+                    const header = data?.header;
+                    if (!header) return result;
+
+                    // Strategy A: c4TabbedHeaderRenderer (older format)
+                    const c4 = header.c4TabbedHeaderRenderer;
+                    if (c4) {
+                        const subText = c4.subscriberCountText?.simpleText
+                            || c4.subscriberCountText?.runs?.map(r => r.text).join('');
+                        if (subText) result.subscriberText = subText;
+
+                        const avatarThumbs = c4.avatar?.thumbnails;
+                        if (avatarThumbs && avatarThumbs.length > 0) {
+                            result.avatar = avatarThumbs[avatarThumbs.length - 1].url;
+                        }
+                        result.name = c4.title;
+                    }
+
+                    // Strategy B: pageHeaderRenderer (newer format, 2024+)
+                    const phr = header.pageHeaderRenderer;
+                    if (phr) {
+                        const phvm = phr?.content?.pageHeaderViewModel;
+                        if (phvm) {
+                            // Subscriber count from metadataRows
+                            if (!result.subscriberText) {
+                                const rows = phvm?.metadata?.contentMetadataViewModel?.metadataRows;
+                                if (rows) {
+                                    for (const row of rows) {
+                                        for (const part of (row.metadataParts || [])) {
+                                            const t = part.text?.content || '';
+                                            if (t.includes('subscriber') || t.includes('inscrito') || t.includes('Subscriber')) {
+                                                result.subscriberText = t;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Avatar from pageHeaderRenderer
+                            if (!result.avatar) {
+                                const imgModel = phvm?.image?.decoratedAvatarViewModel?.avatar?.avatarViewModel?.image?.sources;
+                                if (imgModel && imgModel.length > 0) {
+                                    result.avatar = imgModel[imgModel.length - 1].url;
+                                }
+                            }
+                            // Title
+                            if (!result.name && phvm?.title?.dynamicTextViewModel?.text?.content) {
+                                result.name = phvm.title.dynamicTextViewModel.text.content;
+                            }
+                        }
+                    }
+                } catch (e) {
+                    // Silent
+                }
+                return result;
+            }
+
+            // Helper: parse subscriber text to a number
+            function parseSubText(text) {
+                if (!text) return 0;
+                const cleaned = text.replace(/subscribers?|inscritos?|abonnés?/gi, '').trim();
+                const match = cleaned.match(/([\d.,]+)\s*([KMBkmb])?/);
+                if (!match) return 0;
+                let n = parseFloat(match[1].replace(',', '.'));
+                const suffix = (match[2] || '').toUpperCase();
+                if (suffix === 'K') n *= 1000;
+                else if (suffix === 'M') n *= 1000000;
+                else if (suffix === 'B') n *= 1000000000;
+                return Math.round(n);
+            }
+
+            // Helper: extract ytInitialData JSON from HTML string safely
+            function extractYtInitialDataFromHtml(html) {
+                const marker = 'var ytInitialData = ';
+                const startIdx = html.indexOf(marker);
+                if (startIdx === -1) return null;
+                const jsonStart = startIdx + marker.length;
+                // Find matching closing brace by counting braces
+                let depth = 0;
+                let inString = false;
+                let escape = false;
+                for (let i = jsonStart; i < html.length; i++) {
+                    const ch = html[i];
+                    if (escape) { escape = false; continue; }
+                    if (ch === '\\' && inString) { escape = true; continue; }
+                    if (ch === '"' && !escape) { inString = !inString; continue; }
+                    if (inString) continue;
+                    if (ch === '{') depth++;
+                    else if (ch === '}') {
+                        depth--;
+                        if (depth === 0) {
+                            try {
+                                return JSON.parse(html.substring(jsonStart, i + 1));
+                            } catch (e) {
+                                return null;
+                            }
+                        }
+                    }
+                }
+                return null;
+            }
+
+            // Strategy 1: Direct HTTP fetch + parse ytInitialData (fast, no Puppeteer needed)
+            if (!subscriberCount || !avatarUrl) {
+                try {
+                    console.log(`  [YouTube] Fetching channel page via HTTP...`);
+                    const channelHtml = await fetch(url, {
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                            'Accept-Language': 'en-US,en;q=0.9',
+                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                        },
+                        signal: AbortSignal.timeout(15000)
+                    }).then(r => r.text());
+
+                    const ytData = extractYtInitialDataFromHtml(channelHtml);
+                    if (ytData) {
+                        const parsed = parseYtInitialData(ytData);
+                        if (parsed.subscriberText && !subscriberCount) {
+                            subscriberCount = parseSubText(parsed.subscriberText);
+                            console.log(`  [YouTube] HTTP subscribers: "${parsed.subscriberText}" → ${fmt(subscriberCount)}`);
+                        }
+                        if (parsed.avatar && !avatarUrl) {
+                            avatarUrl = parsed.avatar;
+                            console.log(`  [YouTube] HTTP avatar: found`);
+                        }
+                    } else {
+                        console.log(`  [YouTube] HTTP: ytInitialData not found in page`);
+                    }
+
+                    // Fallback: try og:image for avatar
+                    if (!avatarUrl) {
+                        const ogMatch = channelHtml.match(/<meta property="og:image" content="([^"]+)">/i);
+                        if (ogMatch) {
+                            avatarUrl = ogMatch[1].replace(/\\u002F/g, '/').replace(/=s\d+-/i, '=s176-');
+                            console.log(`  [YouTube] HTTP og:image avatar: found`);
+                        }
+                    }
+                } catch (e) {
+                    console.log(`  [YouTube] HTTP channel fetch failed: ${e.message.substring(0, 150)}`);
+                }
+            }
+
+            // Strategy 2: Puppeteer fallback (if HTTP fetch didn't get subscriber count)
             if (!subscriberCount || !avatarUrl) {
                 let browser = null;
                 try {
-                    console.log(`  [YouTube] Fetching channel info via Puppeteer...`);
+                    console.log(`  [YouTube] Fetching channel info via Puppeteer (fallback)...`);
                     browser = await puppeteer.launch({
                         executablePath: CHROME_PATH,
                         headless: 'new',
@@ -468,124 +613,74 @@ app.post('/api/fetch/:platform/:id', async (req, res) => {
                     const page = await browser.newPage();
                     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-                    // Navigate to channel page
                     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+                    await new Promise(r => setTimeout(r, 3000));
 
-                    // Wait a moment for initial data to be available
-                    await new Promise(r => setTimeout(r, 2000));
-
-                    // Extract ytInitialData which contains subscriber count and avatar
+                    // Use window.ytInitialData directly (no regex needed, avoids parsing issues)
                     const channelData = await page.evaluate(() => {
-                        const result = { subscribers: 0, avatar: null, name: null };
+                        const result = { subscriberText: null, avatar: null, name: null };
 
-                        // Try to get data from ytInitialData (embedded in page scripts)
-                        try {
-                            const scripts = document.querySelectorAll('script');
-                            for (const script of scripts) {
-                                const text = script.textContent || '';
-                                if (text.includes('ytInitialData')) {
-                                    const match = text.match(/var\s+ytInitialData\s*=\s*(\{[\s\S]*?\});/);
-                                    if (match) {
-                                        const data = JSON.parse(match[1]);
-
-                                        // Navigate to header for subscriber count
-                                        const header = data?.header?.c4TabbedHeaderRenderer
-                                            || data?.header?.pageHeaderRenderer;
-
-                                        if (header) {
-                                            // c4TabbedHeaderRenderer format
-                                            const subText = header.subscriberCountText?.simpleText
-                                                || header.subscriberCountText?.runs?.map(r => r.text).join('');
-                                            if (subText) {
-                                                result.subscriberText = subText;
-                                            }
-
-                                            // Avatar
-                                            const avatarThumbs = header.avatar?.thumbnails;
-                                            if (avatarThumbs && avatarThumbs.length > 0) {
-                                                result.avatar = avatarThumbs[avatarThumbs.length - 1].url;
-                                            }
-
-                                            result.name = header.title;
-                                        }
-
-                                        // pageHeaderRenderer format (newer)
-                                        if (!result.subscriberText) {
-                                            const metadata = data?.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.metadata?.contentMetadataViewModel?.metadataRows;
-                                            if (metadata) {
-                                                for (const row of metadata) {
-                                                    for (const part of (row.metadataParts || [])) {
-                                                        const t = part.text?.content || '';
-                                                        if (t.includes('subscriber') || t.includes('inscrito')) {
-                                                            result.subscriberText = t;
-                                                        }
+                        function extractFromData(data) {
+                            if (!data?.header) return;
+                            // c4TabbedHeaderRenderer
+                            const c4 = data.header.c4TabbedHeaderRenderer;
+                            if (c4) {
+                                const subText = c4.subscriberCountText?.simpleText
+                                    || c4.subscriberCountText?.runs?.map(r => r.text).join('');
+                                if (subText) result.subscriberText = subText;
+                                const avatarThumbs = c4.avatar?.thumbnails;
+                                if (avatarThumbs && avatarThumbs.length > 0) result.avatar = avatarThumbs[avatarThumbs.length - 1].url;
+                            }
+                            // pageHeaderRenderer (newer)
+                            const phr = data.header.pageHeaderRenderer;
+                            if (phr) {
+                                const phvm = phr?.content?.pageHeaderViewModel;
+                                if (phvm) {
+                                    if (!result.subscriberText) {
+                                        const rows = phvm?.metadata?.contentMetadataViewModel?.metadataRows;
+                                        if (rows) {
+                                            for (const row of rows) {
+                                                for (const part of (row.metadataParts || [])) {
+                                                    const t = part.text?.content || '';
+                                                    if (t.includes('subscriber') || t.includes('inscrito') || t.includes('Subscriber')) {
+                                                        result.subscriberText = t;
                                                     }
                                                 }
                                             }
-                                            // Avatar from pageHeaderRenderer
-                                            const imgModel = data?.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.image?.decoratedAvatarViewModel?.avatar?.avatarViewModel?.image?.sources;
-                                            if (imgModel && imgModel.length > 0) {
-                                                result.avatar = imgModel[imgModel.length - 1].url;
-                                            }
                                         }
-
-                                        break;
+                                    }
+                                    if (!result.avatar) {
+                                        const imgModel = phvm?.image?.decoratedAvatarViewModel?.avatar?.avatarViewModel?.image?.sources;
+                                        if (imgModel && imgModel.length > 0) result.avatar = imgModel[imgModel.length - 1].url;
                                     }
                                 }
                             }
-                        } catch (e) {
-                            // Silent
                         }
 
-                        // Fallback: try window.ytInitialData directly
-                        if (!result.subscriberText && window.ytInitialData) {
-                            try {
-                                const data = window.ytInitialData;
-                                const header = data?.header?.c4TabbedHeaderRenderer || data?.header?.pageHeaderRenderer;
-                                if (header) {
-                                    const subText = header.subscriberCountText?.simpleText
-                                        || header.subscriberCountText?.runs?.map(r => r.text).join('');
-                                    if (subText) result.subscriberText = subText;
-
-                                    const avatarThumbs = header.avatar?.thumbnails;
-                                    if (avatarThumbs && avatarThumbs.length > 0) {
-                                        result.avatar = avatarThumbs[avatarThumbs.length - 1].url;
-                                    }
-                                }
-                            } catch (e) { }
+                        // Try window.ytInitialData first (most reliable in browser context)
+                        if (window.ytInitialData) {
+                            extractFromData(window.ytInitialData);
                         }
 
-                        // Fallback: try meta tags
+                        // Fallback: meta tags for avatar
                         if (!result.avatar) {
                             const ogImg = document.querySelector('meta[property="og:image"]');
                             if (ogImg) result.avatar = ogImg.getAttribute('content');
                         }
 
-                        // Fallback: try reading subscriber text from DOM
+                        // Fallback: DOM for subscriber count
                         if (!result.subscriberText) {
-                            const subEl = document.querySelector('#subscriber-count, .yt-subscription-button-subscriber-count-branded-horizontal, [id*="subscriber"]');
+                            const subEl = document.querySelector('#subscriber-count, [id*="subscriber"]');
                             if (subEl) result.subscriberText = subEl.textContent.trim();
                         }
 
                         return result;
                     });
 
-                    // Parse subscriber text to number
-                    if (channelData.subscriberText) {
-                        // Parse strings like "15.6K subscribers", "1.2M inscritos", "500 subscribers"
-                        const subStr = channelData.subscriberText.replace(/subscribers?|inscritos?/gi, '').trim();
-                        const parsed = subStr.match(/([\d.,]+)\s*([KMBkmb])?/);
-                        if (parsed) {
-                            let n = parseFloat(parsed[1].replace(',', '.'));
-                            const suffix = (parsed[2] || '').toUpperCase();
-                            if (suffix === 'K') n *= 1000;
-                            else if (suffix === 'M') n *= 1000000;
-                            else if (suffix === 'B') n *= 1000000000;
-                            subscriberCount = Math.round(n);
-                        }
+                    if (channelData.subscriberText && !subscriberCount) {
+                        subscriberCount = parseSubText(channelData.subscriberText);
                         console.log(`  [YouTube] Puppeteer subscribers: "${channelData.subscriberText}" → ${fmt(subscriberCount)}`);
                     }
-
                     if (channelData.avatar && !avatarUrl) {
                         avatarUrl = channelData.avatar;
                         console.log(`  [YouTube] Puppeteer avatar: found`);
@@ -595,27 +690,6 @@ app.post('/api/fetch/:platform/:id', async (req, res) => {
                     console.log(`  [YouTube] Puppeteer channel scrape failed: ${e.message.substring(0, 150)}`);
                 } finally {
                     if (browser) await browser.close().catch(() => { });
-                }
-            }
-
-            // Last resort fallback: simple HTML fetch for avatar only
-            if (!avatarUrl) {
-                try {
-                    const channelHtml = await fetch(url, {
-                        headers: {
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                            'Accept-Language': 'en-US,en;q=0.9'
-                        },
-                        signal: AbortSignal.timeout(10000)
-                    }).then(r => r.text()).catch(() => '');
-
-                    const avatarMatch = channelHtml.match(/<meta property="og:image" content="([^"]+)">/i)
-                        || channelHtml.match(/"avatar":\{"thumbnails":\[\{"url":"([^"]+)"/i);
-                    if (avatarMatch) {
-                        avatarUrl = avatarMatch[1].replace(/\\u002F/g, '/').replace(/=s\d+-/i, '=s176-');
-                    }
-                } catch (e) {
-                    console.log(`  [YouTube] HTML avatar fallback failed: ${e.message}`);
                 }
             }
 
