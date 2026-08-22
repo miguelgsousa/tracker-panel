@@ -142,6 +142,226 @@ async function processInBatches(items, batchSize, processFn, onBatchComplete) {
     return results;
 }
 
+
+// --- Meta / Instagram Graph API helpers ---
+const GRAPH_VERSION = process.env.GRAPH_VERSION || 'v21.0';
+const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
+
+function getInstagramToken(db) {
+    // Prefer the dedicated Instagram token, but keep the Facebook token as a fallback
+    // because the Instagram Graph API is served through Meta/Facebook Graph.
+    return db._settings?.instagramToken || db._settings?.facebookToken || '';
+}
+
+function cleanHandle(value) {
+    return String(value || '')
+        .trim()
+        .replace(/^https?:\/\/(www\.)?instagram\.com\//i, '')
+        .replace(/[/?#].*$/, '')
+        .replace(/^@/, '')
+        .trim();
+}
+
+async function graphGet(pathname, params = {}, accessToken, timeoutMs = 20000) {
+    const url = new URL(`${GRAPH_BASE}/${String(pathname).replace(/^\//, '')}`);
+    for (const [k, v] of Object.entries(params)) {
+        if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
+    }
+    url.searchParams.set('access_token', accessToken);
+    const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) {
+        const msg = data.error?.message || `Graph API HTTP ${response.status}`;
+        throw new Error(msg);
+    }
+    return data;
+}
+
+async function graphGetAll(pathname, params = {}, accessToken, limit = 100) {
+    const first = await graphGet(pathname, { ...params, limit }, accessToken);
+    const rows = [...(first.data || [])];
+    let next = first.paging?.next;
+    while (next && rows.length < 500) {
+        const response = await fetch(next, { signal: AbortSignal.timeout(20000) });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.error) break;
+        rows.push(...(data.data || []));
+        next = data.paging?.next;
+    }
+    return rows;
+}
+
+async function getManagedInstagramAccounts(accessToken) {
+    const fields = [
+        'id', 'name', 'access_token',
+        'instagram_business_account{id,username,name,profile_picture_url,followers_count,follows_count,media_count}'
+    ].join(',');
+    const pages = await graphGetAll('me/accounts', { fields }, accessToken, 100);
+    return pages
+        .filter(page => page.instagram_business_account)
+        .map(page => ({
+            pageId: page.id,
+            pageName: page.name,
+            pageAccessToken: page.access_token || accessToken,
+            ig: page.instagram_business_account
+        }));
+}
+
+function findManagedInstagramAccount(managedAccounts, account) {
+    const wanted = cleanHandle(account.handle).toLowerCase();
+    return managedAccounts.find(item =>
+        String(item.ig.id) === String(account.igUserId || account.handle) ||
+        String(item.ig.username || '').toLowerCase() === wanted ||
+        String(item.ig.name || '').toLowerCase() === wanted
+    );
+}
+
+function insightValue(insights, metricName) {
+    const row = (insights?.data || []).find(item => item.name === metricName);
+    const values = row?.values || [];
+    if (!values.length) return 0;
+    const last = values[values.length - 1]?.value;
+    return typeof last === 'number' ? last : parseInt(last || 0, 10) || 0;
+}
+
+async function tryInsightGroups(objectId, groups, token, period = null) {
+    for (const metrics of groups) {
+        try {
+            const params = { metric: metrics };
+            if (period) params.period = period;
+            return await graphGet(`${objectId}/insights`, params, token);
+        } catch (e) {
+            // Continue with narrower/older metric sets; Meta changes metric availability by API version,
+            // object type, account type, and permission set.
+        }
+    }
+    return { data: [] };
+}
+
+async function fetchInstagramGraphMetrics(account, db, onProgress = () => {}) {
+    const userToken = getInstagramToken(db);
+    if (!userToken) {
+        throw new Error('Configure o token da Instagram Graph API antes de atualizar. Use o botão "Configurar API" na aba Instagram.');
+    }
+
+    const managed = await getManagedInstagramAccounts(userToken);
+    const matched = findManagedInstagramAccount(managed, account);
+    if (!matched && !account.igUserId) {
+        const available = managed.map(item => `@${item.ig.username}`).join(', ') || 'nenhuma conta encontrada';
+        throw new Error(`Conta @${account.handle} não encontrada entre as contas Instagram conectadas ao token. Disponíveis: ${available}`);
+    }
+
+    const igId = matched?.ig.id || account.igUserId || account.handle;
+    const pageToken = matched?.pageAccessToken || userToken;
+    onProgress(10);
+
+    const profile = await graphGet(igId, {
+        fields: 'id,username,name,biography,website,profile_picture_url,followers_count,follows_count,media_count'
+    }, pageToken);
+
+    const accountInsights = await tryInsightGroups(igId, [
+        'views,reach,total_interactions,profile_views,website_clicks',
+        'views,reach,total_interactions',
+        'impressions,reach,profile_views,website_clicks',
+        'reach,profile_views,website_clicks'
+    ], pageToken, 'day');
+    onProgress(25);
+
+    const media = await graphGetAll(`${igId}/media`, {
+        fields: 'id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count',
+        limit: 50
+    }, pageToken, 50).catch(() => []);
+
+    let totalViews = 0, totalReach = 0, totalLikes = 0, totalComments = 0, totalShares = 0, totalSaved = 0, totalInteractions = 0;
+    const recentContent = [];
+    const maxItems = Math.min(media.length, 50);
+
+    for (let i = 0; i < maxItems; i++) {
+        const item = media[i];
+        const product = String(item.media_product_type || item.media_type || '').toUpperCase();
+        const metricGroups = product.includes('REELS') || item.media_type === 'VIDEO'
+            ? ['views,plays,reach,likes,comments,shares,saved,total_interactions', 'views,reach,likes,comments,shares,saved,total_interactions', 'plays,reach,saved,shares']
+            : ['views,impressions,reach,likes,comments,shares,saved,total_interactions', 'impressions,reach,saved,total_interactions', 'reach,saved'];
+        const mediaInsights = await tryInsightGroups(item.id, metricGroups, pageToken, null);
+
+        const views = insightValue(mediaInsights, 'views') || insightValue(mediaInsights, 'plays') || insightValue(mediaInsights, 'impressions') || 0;
+        const reach = insightValue(mediaInsights, 'reach') || 0;
+        const likes = insightValue(mediaInsights, 'likes') || item.like_count || 0;
+        const comments = insightValue(mediaInsights, 'comments') || item.comments_count || 0;
+        const shares = insightValue(mediaInsights, 'shares') || 0;
+        const saved = insightValue(mediaInsights, 'saved') || 0;
+        const interactions = insightValue(mediaInsights, 'total_interactions') || (likes + comments + shares + saved);
+
+        totalViews += views;
+        totalReach += reach;
+        totalLikes += likes;
+        totalComments += comments;
+        totalShares += shares;
+        totalSaved += saved;
+        totalInteractions += interactions;
+
+        recentContent.push({
+            id: item.id,
+            title: (item.caption || `${item.media_product_type || item.media_type || 'Instagram'} #${i + 1}`).slice(0, 120),
+            description: (item.caption || '').slice(0, 300),
+            url: item.permalink,
+            thumbnail: item.thumbnail_url || item.media_url,
+            views, reach, likes, comments, shares, saved, interactions,
+            uploadDate: item.timestamp,
+            timestamp: item.timestamp ? Math.floor(new Date(item.timestamp).getTime() / 1000) : null,
+            type: (item.media_product_type || item.media_type || 'media').toLowerCase()
+        });
+
+        if ((i + 1) % 10 === 0 || i === maxItems - 1) {
+            onProgress(25 + Math.round(((i + 1) / Math.max(maxItems, 1)) * 65));
+        }
+    }
+
+    const dailyViews = insightValue(accountInsights, 'views') || insightValue(accountInsights, 'impressions') || 0;
+    const dailyReach = insightValue(accountInsights, 'reach') || 0;
+    const profileViews = insightValue(accountInsights, 'profile_views') || 0;
+    const websiteClicks = insightValue(accountInsights, 'website_clicks') || 0;
+    const dailyInteractions = insightValue(accountInsights, 'total_interactions') || 0;
+
+    account.igUserId = profile.id;
+    account.handle = profile.username || account.handle;
+    account.name = profile.name || account.name || profile.username;
+    account.url = `https://www.instagram.com/${profile.username || account.handle}/`;
+
+    return {
+        metrics: {
+            source: 'instagram_graph_api',
+            graphVersion: GRAPH_VERSION,
+            igUserId: profile.id,
+            pageId: matched?.pageId || account.pageId || null,
+            pageName: matched?.pageName || account.pageName || null,
+            avatar: profile.profile_picture_url || matched?.ig.profile_picture_url || null,
+            followers: profile.followers_count || matched?.ig.followers_count || 0,
+            following: profile.follows_count || matched?.ig.follows_count || 0,
+            postCount: profile.media_count || matched?.ig.media_count || recentContent.length,
+            fullName: profile.name || profile.username,
+            website: profile.website || null,
+            biography: profile.biography || null,
+            todayViews: dailyViews,
+            todayReach: dailyReach,
+            todayInteractions: dailyInteractions,
+            profileViews,
+            websiteClicks,
+            totalRecentViews: totalViews,
+            totalRecentReach: totalReach,
+            totalRecentLikes: totalLikes,
+            totalRecentComments: totalComments,
+            totalShares,
+            totalSaved,
+            totalInteractions,
+            engagementRate: (profile.followers_count || 0) > 0 ? parseFloat((totalInteractions / profile.followers_count * 100).toFixed(2)) : 0,
+            videoCount: recentContent.length,
+            lastMetricDate: new Date().toISOString().slice(0, 10)
+        },
+        recentContent
+    };
+}
+
 // --- API Routes ---
 
 // --- Settings API (Facebook Token) ---
@@ -159,6 +379,49 @@ app.post('/api/settings/facebook-token', (req, res) => {
     saveDB(db);
     console.log(`[Settings] Facebook API token ${token ? 'saved' : 'removed'}`);
     res.json({ success: true, hasToken: !!token });
+});
+
+
+// --- Settings API (Instagram Graph API Token) ---
+app.get('/api/settings/instagram-token', (req, res) => {
+    const db = loadDB();
+    const token = db._settings?.instagramToken || '';
+    const fallback = !token && !!db._settings?.facebookToken;
+    const shown = token || db._settings?.facebookToken || '';
+    res.json({ token: shown ? '••••' + shown.slice(-8) : '', hasToken: !!shown, usingFacebookFallback: fallback });
+});
+
+app.post('/api/settings/instagram-token', (req, res) => {
+    const { token } = req.body;
+    const db = loadDB();
+    if (!db._settings) db._settings = {};
+    db._settings.instagramToken = token || '';
+    saveDB(db);
+    console.log(`[Settings] Instagram Graph API token ${token ? 'saved' : 'removed'}`);
+    res.json({ success: true, hasToken: !!token });
+});
+
+// List Instagram Business/Creator accounts connected to the configured Meta token.
+app.get('/api/instagram/available-accounts', async (req, res) => {
+    try {
+        const db = loadDB();
+        const token = getInstagramToken(db);
+        if (!token) return res.status(400).json({ error: 'Instagram Graph API token is not configured' });
+        const accounts = await getManagedInstagramAccounts(token);
+        res.json(accounts.map(item => ({
+            igUserId: item.ig.id,
+            username: item.ig.username,
+            name: item.ig.name || item.ig.username,
+            pageId: item.pageId,
+            pageName: item.pageName,
+            avatar: item.ig.profile_picture_url || null,
+            followers: item.ig.followers_count || 0,
+            following: item.ig.follows_count || 0,
+            mediaCount: item.ig.media_count || 0
+        })));
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 // --- Folders API ---
@@ -258,7 +521,7 @@ app.get('/api/accounts/:platform', (req, res) => {
 });
 
 // POST add account
-app.post('/api/accounts/:platform', (req, res) => {
+app.post('/api/accounts/:platform', async (req, res) => {
     const { platform } = req.params;
     const { handle, name } = req.body;
 
@@ -272,16 +535,48 @@ app.post('/api/accounts/:platform', (req, res) => {
 
     const account = {
         id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-        handle: handle.replace(/^@/, ''),
-        name: name || handle,
+        handle: cleanHandle(handle),
+        name: name || cleanHandle(handle) || handle,
         platform,
-        url: buildUrl(platform, handle),
+        url: buildUrl(platform, cleanHandle(handle) || handle),
         addedAt: new Date().toISOString(),
         lastFetch: null,
         metrics: null,
         recentContent: [],
-        cookie: req.body.cookie || null
+        cookie: platform === 'instagram' ? null : (req.body.cookie || null)
     };
+
+    if (platform === 'instagram') {
+        const token = getInstagramToken(db);
+        if (token) {
+            try {
+                const managed = await getManagedInstagramAccounts(token);
+                const matched = findManagedInstagramAccount(managed, account);
+                if (matched) {
+                    account.igUserId = matched.ig.id;
+                    account.pageId = matched.pageId;
+                    account.pageName = matched.pageName;
+                    account.handle = matched.ig.username || account.handle;
+                    account.name = name || matched.ig.name || matched.ig.username || account.name;
+                    account.url = `https://www.instagram.com/${account.handle}/`;
+                    account.metrics = {
+                        source: 'instagram_graph_api',
+                        igUserId: matched.ig.id,
+                        pageId: matched.pageId,
+                        pageName: matched.pageName,
+                        avatar: matched.ig.profile_picture_url || null,
+                        followers: matched.ig.followers_count || 0,
+                        following: matched.ig.follows_count || 0,
+                        postCount: matched.ig.media_count || 0,
+                        totalRecentViews: 0,
+                        todayViews: 0
+                    };
+                }
+            } catch (e) {
+                console.log(`[Instagram] Could not pre-resolve account on add: ${e.message}`);
+            }
+        }
+    }
 
     db[platform].push(account);
     saveDB(db);
@@ -959,113 +1254,15 @@ app.post('/api/fetch/:platform/:id', async (req, res) => {
 
         } else if (platform === 'instagram') {
             try {
-                console.log(`  [Instagram] Using Instaloader...`);
-
-                // Strategy 1: Instaloader Python script (most reliable)
-                try {
-                    const igResult = await new Promise((resolve, reject) => {
-                        const pyBin = 'python';
-                        const scriptPath = path.join(__dirname, 'ig_scraper.py');
-                        const args = [scriptPath, account.handle];
-                        console.log(`  [Instagram] Running: ${pyBin} ${args.join(' ')}`);
-                        execFile(pyBin, args, { timeout: 120000, windowsHide: true }, (err, stdout, stderr) => {
-                            if (err) {
-                                // Script may have printed JSON to stdout even on error exit
-                                if (stdout && stdout.trim()) {
-                                    try { return resolve(JSON.parse(stdout.trim())); } catch (e2) { }
-                                }
-                                return reject(new Error(stderr || err.message));
-                            }
-                            try {
-                                resolve(JSON.parse(stdout.trim()));
-                            } catch (e) {
-                                reject(new Error('Failed to parse instaloader output'));
-                            }
-                        });
-                    });
-
-                    if (igResult.error) {
-                        if (igResult.error === 'rate_limited') {
-                            throw new Error('Instagram rate limit (429). Aguarde alguns minutos e tente novamente.');
-                        }
-                        throw new Error(igResult.error);
-                    }
-
-                    const followers = igResult.followers || 0;
-                    const postCount = igResult.posts_count || 0;
-                    const avatarUrl = igResult.profile_pic_url || null;
-                    let totalLikes = 0, totalComments = 0, totalViews = 0;
-
-                    for (const post of (igResult.posts || [])) {
-                        const views = post.views || 0;
-                        const likes = post.likes || 0;
-                        const comments = post.comments || 0;
-                        totalViews += views;
-                        totalLikes += likes;
-                        totalComments += comments;
-
-                        recentContent.push({
-                            id: post.id,
-                            title: post.title || 'Post',
-                            url: post.url,
-                            thumbnail: post.thumbnail,
-                            views, likes, comments,
-                            uploadDate: post.upload_date
-                        });
-                    }
-
-                    metrics = {
-                        avatar: avatarUrl,
-                        followers,
-                        postCount,
-                        fullName: igResult.full_name,
-                        isPrivate: igResult.is_private,
-                        isVerified: igResult.is_verified,
-                        totalRecentViews: totalViews,
-                        totalRecentLikes: totalLikes,
-                        totalRecentComments: totalComments,
-                        engagementRate: followers > 0 ? parseFloat(((totalLikes + totalComments) / followers * 100).toFixed(2)) : 0
-                    };
-
-                    console.log(`  [Instagram] Instaloader: ${followers} followers, ${recentContent.length} posts`);
-
-                } catch (e) {
-                    console.log(`  [Instagram] Instaloader failed: ${e.message}`);
-
-                    // Strategy 2: Scrape HTML meta tags as fallback  
-                    const cleanCookie = account.cookie ? account.cookie.replace(/[\r\n]+/g, ' ').trim() : '';
-                    try {
-                        const profileHtml = await fetch(url, {
-                            headers: {
-                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
-                                'Accept': 'text/html', 'Accept-Language': 'en-US,en;q=0.9',
-                                ...(cleanCookie ? { 'Cookie': cleanCookie } : {})
-                            }
-                        }).then(r => r.text());
-
-                        const descMatch = profileHtml.match(/content="([\d,.KMBkmb]+)\s*Followers?/i);
-                        let followers = descMatch ? parseMetricStr(descMatch[1]) : 0;
-                        const postMatch = profileHtml.match(/([\d,.KMBkmb]+)\s*Posts?/i);
-                        let postCount = postMatch ? parseMetricStr(postMatch[1]) : 0;
-                        const ogImg = profileHtml.match(/<meta property="og:image"\s+content="([^"]+)"/i);
-
-                        if (followers > 0) {
-                            metrics = {
-                                avatar: ogImg ? ogImg[1] : null,
-                                followers, postCount,
-                                totalRecentViews: 0, totalRecentLikes: 0, totalRecentComments: 0
-                            };
-                            console.log(`  [Instagram] HTML fallback: ${followers} followers`);
-                        } else {
-                            throw new Error('Sem dados nas meta tags');
-                        }
-                    } catch (e2) {
-                        throw new Error('Instaloader e HTML falharam. O Instagram pode estar bloqueando requisições. Tente novamente mais tarde.');
-                    }
-                }
-
+                console.log(`  [Instagram] Using Instagram Graph API only...`);
+                const result = await fetchInstagramGraphMetrics(account, db, progress => {
+                    res.write(JSON.stringify({ status: 'update', progress }) + '\n');
+                });
+                metrics = result.metrics;
+                recentContent = result.recentContent;
+                console.log(`  [Instagram] Graph API OK: @${account.handle}, ${fmt(metrics.todayViews || 0)} views hoje, ${recentContent.length} mídias`);
             } catch (e) {
-                metrics = { error: 'Não foi possível acessar o perfil.', message: e.message };
+                metrics = { error: 'Falha na Instagram Graph API.', message: e.message, source: 'instagram_graph_api' };
             }
 
         } else if (platform === 'facebook') {
@@ -1684,12 +1881,15 @@ app.post('/api/verify/:platform', async (req, res) => {
 });
 
 // Start server
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n╔══════════════════════════════════════════╗`);
     console.log(`║  Social Tracker Server running!          ║`);
     console.log(`║  http://localhost:${PORT}                    ║`);
     console.log(`║  yt-dlp backend ready                    ║`);
     console.log(`╚══════════════════════════════════════════╝\n`);
+});
+server.on('error', err => {
+    console.error('[Server] Listen error:', err.message);
 });
 
 

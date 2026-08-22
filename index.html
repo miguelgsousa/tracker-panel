@@ -1355,6 +1355,40 @@
         </div>
     </div>
 
+    <!-- Instagram Graph API Token Modal -->
+    <div class="modal-overlay" id="modal-ig-token">
+        <div class="modal">
+            <h2 style="display:flex;align-items:center;gap:10px"><i data-lucide="instagram"
+                    style="width:22px;height:22px;color:#e1306c"></i> Instagram Graph API</h2>
+            <p style="margin-bottom:16px">Configure o token Meta com acesso às contas Instagram Business/Creator. A aba Instagram usa apenas a API oficial.</p>
+            <div class="input-group">
+                <label>Access Token</label>
+                <textarea id="input-ig-token"
+                    placeholder="Cole um User Access Token com instagram_basic, instagram_manage_insights, pages_show_list e pages_read_engagement" rows="3"
+                    style="width:100%;padding:12px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:12px;color:#fff;font-size:12px;font-family:monospace;resize:vertical"></textarea>
+            </div>
+            <div id="ig-token-status" style="font-size:11px;margin-bottom:12px;display:none"></div>
+            <div id="ig-available-accounts" style="display:none;background:rgba(225,48,108,.08);border:1px solid rgba(225,48,108,.2);border-radius:10px;padding:12px;margin-bottom:16px;max-height:180px;overflow:auto"></div>
+            <div style="background:rgba(225,48,108,.08);border:1px solid rgba(225,48,108,.2);border-radius:10px;padding:12px;margin-bottom:16px">
+                <p style="font-size:11px;color:rgba(255,255,255,.7);line-height:1.6">
+                    <strong style="color:#e1306c">Requisitos:</strong><br>
+                    Contas Instagram devem ser <strong>Business/Creator</strong> e conectadas a uma Página do Facebook.<br>
+                    Permissões recomendadas: <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;font-size:10px">instagram_basic</code>,
+                    <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;font-size:10px">instagram_manage_insights</code>,
+                    <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;font-size:10px">pages_show_list</code>,
+                    <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;font-size:10px">pages_read_engagement</code>.
+                </p>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+                <button class="btn btn-danger btn-sm" onclick="removeIgToken()" id="btn-remove-ig-token"
+                    style="margin-right:auto;display:none">Remover Token</button>
+                <button class="btn btn-outline" onclick="loadIgAvailableAccounts()"><i data-lucide="list" style="width:14px;height:14px"></i> Ver Contas</button>
+                <button class="btn btn-outline" onclick="document.getElementById('modal-ig-token').classList.remove('show')">Cancelar</button>
+                <button class="btn btn-primary" onclick="saveIgToken()"><i data-lucide="check" style="width:14px;height:14px"></i> Salvar Token</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Main -->
     <div class="main">
         <div style="text-align:center;margin-bottom:32px">
@@ -1399,7 +1433,7 @@
         const PLATFORMS = {
             youtube: { name: 'YouTube', icon: 'youtube', color: '#ef4444', placeholder: '@techguru ou URL do canal' },
             tiktok: { name: 'TikTok', icon: 'clapperboard', color: '#00f2ea', placeholder: '@username' },
-            instagram: { name: 'Instagram', icon: 'instagram', color: '#e1306c', placeholder: '@username' },
+            instagram: { name: 'Instagram', icon: 'instagram', color: '#e1306c', placeholder: '@username ou IG User ID conectado' },
             facebook: { name: 'Facebook', icon: 'facebook', color: '#1877f2', placeholder: 'nome-da-pagina ou URL' },
             twitter: { name: 'Twitter / X', icon: 'twitter', color: '#1da1f2', placeholder: '@username' }
         };
@@ -1735,6 +1769,7 @@
             <button class="btn btn-outline btn-sm" onclick="openFolderModal('${platform}')"><i data-lucide="folder-plus" style="width:14px;height:14px"></i> Nova Pasta</button>
             ${accounts.length > 0 ? `<button class="btn btn-outline btn-sm" onclick="fetchAllAccounts('${platform}', ${state.openFolder ? `'${state.openFolder}'` : 'null'})"><i data-lucide="refresh-cw" style="width:14px;height:14px"></i> ${state.openFolder ? 'Atualizar Pasta' : 'Atualizar Tudo'}</button>` : ''}
             ${platform === 'facebook' ? `<button class="btn btn-outline btn-sm" onclick="openFbTokenModal()" style="border-color:rgba(24,119,242,.3);color:#1877f2"><i data-lucide="key" style="width:14px;height:14px"></i> <span id="fb-api-btn-label">Configurar API</span></button>` : ''}
+            ${platform === 'instagram' ? `<button class="btn btn-outline btn-sm" onclick="openIgTokenModal()" style="border-color:rgba(225,48,108,.3);color:#e1306c"><i data-lucide="key" style="width:14px;height:14px"></i> <span id="ig-api-btn-label">Configurar API</span></button>` : ''}
             <button class="btn btn-primary btn-sm" onclick="openAddModal('${platform}')"><i data-lucide="plus" style="width:14px;height:14px"></i> Adicionar Perfil</button>
         </div>
     </div>`;
@@ -1755,6 +1790,35 @@
                             <button class="btn btn-sm" style="background:rgba(0,0,0,0.3);color:#fff;border:none" onclick="clearSelection('${platform}')">Desmarcar</button>
                         </div>
                     `;
+                }
+
+                if (platform === 'instagram') {
+                    const igWithMetrics = accounts.filter(a => a.metrics && !a.metrics.error);
+                    const totals = igWithMetrics.reduce((acc, a) => {
+                        const m = a.metrics || {};
+                        acc.todayViews += m.todayViews || 0;
+                        acc.todayReach += m.todayReach || 0;
+                        acc.followers += m.followers || 0;
+                        acc.recentViews += m.totalRecentViews || 0;
+                        acc.interactions += m.totalInteractions || m.todayInteractions || 0;
+                        return acc;
+                    }, { todayViews: 0, todayReach: 0, followers: 0, recentViews: 0, interactions: 0 });
+                    const topAccounts = [...igWithMetrics]
+                        .sort((a, b) => ((b.metrics?.todayViews || b.metrics?.totalRecentViews || 0) - (a.metrics?.todayViews || a.metrics?.totalRecentViews || 0)))
+                        .slice(0, 5);
+                    html += `<div class="bento" style="margin-bottom:24px">
+                        <div class="glass" style="padding:20px"><span class="stat-label">Views Hoje</span><p class="stat-value" style="color:#e1306c;margin-top:10px">${fmt(totals.todayViews)}</p><p style="font-size:10px;color:var(--muted);margin-top:6px">soma das contas via Graph API</p></div>
+                        <div class="glass" style="padding:20px"><span class="stat-label">Reach Hoje</span><p class="stat-value" style="color:#fff;margin-top:10px">${fmt(totals.todayReach)}</p></div>
+                        <div class="glass" style="padding:20px"><span class="stat-label">Seguidores</span><p class="stat-value" style="color:#fff;margin-top:10px">${fmt(totals.followers)}</p></div>
+                        <div class="glass" style="padding:20px"><span class="stat-label">Views Recentes</span><p class="stat-value" style="color:var(--cyan);margin-top:10px">${fmt(totals.recentViews)}</p></div>
+                        <div class="glass col4" style="padding:20px">
+                            <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px">
+                                <h3 style="font-size:14px;font-weight:700;color:#fff">Ranking de contas Instagram</h3>
+                                <span style="font-size:10px;color:var(--muted)">${igWithMetrics.length}/${accounts.length} com métricas</span>
+                            </div>
+                            ${topAccounts.length ? topAccounts.map((a, idx) => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:1px solid rgba(255,255,255,.06)"><div style="display:flex;align-items:center;gap:10px"><span style="font-size:11px;color:var(--muted);width:18px">#${idx + 1}</span><strong style="font-size:12px;color:#fff">@${a.handle}</strong><span style="font-size:10px;color:var(--muted)">${fmt(a.metrics?.followers || 0)} seg.</span></div><div style="display:flex;gap:18px;text-align:right"><span style="font-size:11px;color:#fff"><b>${fmt(a.metrics?.todayViews || 0)}</b> hoje</span><span style="font-size:11px;color:var(--cyan)"><b>${fmt(a.metrics?.totalRecentViews || 0)}</b> recentes</span></div></div>`).join('') : `<p style="font-size:12px;color:var(--muted)">Configure a API e atualize as contas para ver o consolidado.</p>`}
+                        </div>
+                    </div>`;
                 }
 
                 // Render folders
@@ -1822,7 +1886,7 @@
                     const isMultiSelected = state.selectedItems?.includes(account.id);
                     const hasMetrics = account.metrics && !account.metrics.error;
                     const followers = hasMetrics ? (account.metrics.subscribers || account.metrics.followers || 0) : 0;
-                    const views = hasMetrics ? (account.metrics.totalRecentViews || 0) : 0;
+                    const views = hasMetrics ? (platform === 'instagram' ? (account.metrics.todayViews || account.metrics.totalRecentViews || 0) : (account.metrics.totalRecentViews || 0)) : 0;
                     const vidCount = (account.recentContent || []).length;
                     html += `
                 <div class="profile-card ${isSelected ? 'selected' : ''} ${isMultiSelected ? 'multi-selected' : ''}" 
@@ -1847,7 +1911,7 @@
                         <p style="font-size:11px;color:var(--muted)">@${account.handle}</p>
                         ${hasMetrics ? `<div style="display:flex;gap:12px;margin-top:8px">
                             <div><p style="font-size:16px;font-weight:700;color:#fff;font-family:'Space Grotesk'">${fmt(followers)}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">${followerLabel}</p></div>
-                            <div><p style="font-size:16px;font-weight:700;color:#fff;font-family:'Space Grotesk'">${fmt(views)}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">views</p></div>
+                            <div><p style="font-size:16px;font-weight:700;color:#fff;font-family:'Space Grotesk'">${fmt(views)}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">${platform === 'instagram' ? 'views hoje' : 'views'}</p></div>
                             ${platform === 'youtube' && account.metrics.shortCount !== undefined
                                 ? `<div><p style="font-size:16px;font-weight:700;color:var(--cyan);font-family:'Space Grotesk'">${account.metrics.videoCount || 0}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">vídeos</p></div>
                                    <div><p style="font-size:16px;font-weight:700;color:var(--red);font-family:'Space Grotesk'">${account.metrics.shortCount || 0}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">shorts</p></div>`
@@ -1856,14 +1920,14 @@
                                        <div><p style="font-size:16px;font-weight:700;color:var(--cyan);font-family:'Space Grotesk'">${vidCount}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">vídeos</p></div>`
                                     : `<div><p style="font-size:16px;font-weight:700;color:var(--cyan);font-family:'Space Grotesk'">${vidCount}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">vídeos</p></div>`
                             }
-                        </div>` : '<p style="font-size:10px;color:var(--muted);margin-top:6px">Clique em Buscar para carregar dados</p>'}
+                        </div>` : account.metrics?.error ? `<p style="font-size:10px;color:var(--red);margin-top:6px">${account.metrics.message || account.metrics.error}</p>` : '<p style="font-size:10px;color:var(--muted);margin-top:6px">Clique em Buscar para carregar dados</p>'}
                     </div>
                     <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
                         ${fetchingAccounts.has(account.id)
                             ? `<button class="btn btn-outline btn-sm" disabled style="font-size:10px;padding:4px 8px" title="Buscando..."><span class="spinner"></span></button>`
                             : `<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();fetchAccount('${platform}','${account.id}')" id="fetch-btn-${account.id}" style="font-size:10px;padding:4px 8px" title="Atualizar"><i data-lucide="refresh-cw" style="width:11px;height:11px"></i></button>`
                         }
-                        ${['instagram', 'twitter', 'facebook'].includes(platform) ? `<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();openCookieModal('${platform}','${account.id}', '${btoa(account.cookie || '')}')" style="font-size:10px;padding:4px 8px" title="Editar Cookies"><i data-lucide="key" style="width:11px;height:11px"></i></button>` : ''}
+                        ${['twitter', 'facebook'].includes(platform) ? `<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();openCookieModal('${platform}','${account.id}', '${btoa(account.cookie || '')}')" style="font-size:10px;padding:4px 8px" title="Editar Cookies"><i data-lucide="key" style="width:11px;height:11px"></i></button>` : ''}
                         <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteAccount('${platform}','${account.id}')" style="font-size:10px;padding:4px 8px" title="Excluir"><i data-lucide="trash-2" style="width:11px;height:11px"></i></button>
                     </div>
                 </div>`;
@@ -1948,6 +2012,8 @@
                         html += `<div class="glass" style="padding:24px;text-align:center"><p style="font-size:12px;color:var(--muted)">Nenhum ${filterName} encontrado para @${selected.handle}.</p></div>`;
                     }
 
+                } else if (selected && selected.metrics?.error) {
+                    html += `<div class="glass" style="padding:24px;text-align:center"><p style="font-size:12px;color:var(--red)">${selected.metrics.message || selected.metrics.error}</p></div>`;
                 } else if (selected && allVideos.length === 0 && selected.metrics) {
                     html += `<div class="glass" style="padding:24px;text-align:center"><p style="font-size:12px;color:var(--muted)">Nenhum vídeo encontrado para @${selected.handle}. Tente atualizar os dados.</p></div>`;
                 } else if (selected) {
@@ -2034,12 +2100,12 @@
             modalPlatform = platform;
             const config = PLATFORMS[platform];
             document.getElementById('modal-title').textContent = `Adicionar Conta — ${config.name}`;
-            document.getElementById('modal-desc').textContent = `Insira o @handle ou URL do perfil/canal do ${config.name}`;
+            document.getElementById('modal-desc').textContent = platform === 'instagram' ? 'Adicione uma conta Business/Creator que esteja conectada ao token da Instagram Graph API.' : `Insira o @handle ou URL do perfil/canal do ${config.name}`;
             document.getElementById('input-handle').placeholder = config.placeholder;
             document.getElementById('input-handle').value = '';
             document.getElementById('input-name').value = '';
             document.getElementById('input-cookie').value = '';
-            document.getElementById('group-cookie').style.display = ['instagram', 'twitter', 'facebook'].includes(platform) ? 'block' : 'none';
+            document.getElementById('group-cookie').style.display = ['twitter', 'facebook'].includes(platform) ? 'block' : 'none';
             document.getElementById('modal-error').style.display = 'none';
             document.getElementById('modal-add').classList.add('show');
             setTimeout(() => document.getElementById('input-handle').focus(), 100);
@@ -2275,12 +2341,128 @@
             } catch (e) { }
         }
 
+        // --- Instagram Graph API Token ---
+        let igTokenLoaded = false;
+
+        async function openIgTokenModal() {
+            document.getElementById('modal-ig-token').classList.add('show');
+            const statusEl = document.getElementById('ig-token-status');
+            const listEl = document.getElementById('ig-available-accounts');
+            statusEl.style.display = 'none';
+            listEl.style.display = 'none';
+            try {
+                const r = await fetch(API + '/settings/instagram-token');
+                const data = await r.json();
+                if (data.hasToken) {
+                    const fallbackText = data.usingFacebookFallback ? ' usando fallback do token Facebook' : '';
+                    document.getElementById('input-ig-token').placeholder = `Token atual: ${data.token}${fallbackText} (cole um novo para substituir)`;
+                    document.getElementById('btn-remove-ig-token').style.display = data.usingFacebookFallback ? 'none' : 'inline-flex';
+                    await loadIgAvailableAccounts(false);
+                } else {
+                    document.getElementById('input-ig-token').placeholder = 'Cole seu token de acesso aqui';
+                    document.getElementById('btn-remove-ig-token').style.display = 'none';
+                }
+            } catch (e) { }
+            lucide.createIcons();
+            setTimeout(() => document.getElementById('input-ig-token').focus(), 100);
+        }
+
+        async function saveIgToken() {
+            const token = document.getElementById('input-ig-token').value.trim();
+            const statusEl = document.getElementById('ig-token-status');
+            if (!token) {
+                statusEl.textContent = 'Cole o token antes de salvar.';
+                statusEl.style.color = 'var(--red)';
+                statusEl.style.display = 'block';
+                return;
+            }
+            try {
+                statusEl.textContent = 'Validando token e buscando contas Instagram...';
+                statusEl.style.color = 'var(--cyan)';
+                statusEl.style.display = 'block';
+                const testRes = await fetch(`https://graph.facebook.com/v21.0/me?access_token=${token}`);
+                const testData = await testRes.json();
+                if (testData.error) {
+                    statusEl.textContent = `Token inválido: ${testData.error.message}`;
+                    statusEl.style.color = 'var(--red)';
+                    return;
+                }
+                await fetch(API + '/settings/instagram-token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token })
+                });
+                document.getElementById('input-ig-token').value = '';
+                igTokenLoaded = true;
+                updateIgApiButton(true);
+                statusEl.textContent = 'Token salvo. Carregando contas disponíveis...';
+                await loadIgAvailableAccounts(false);
+                statusEl.textContent = 'Token salvo com sucesso! Adicione as contas pelo @username e clique em Atualizar.';
+                statusEl.style.color = 'var(--green)';
+            } catch (e) {
+                statusEl.textContent = 'Erro ao salvar: ' + e.message;
+                statusEl.style.color = 'var(--red)';
+                statusEl.style.display = 'block';
+            }
+        }
+
+        async function removeIgToken() {
+            if (!confirm('Remover o token da Instagram Graph API?')) return;
+            await fetch(API + '/settings/instagram-token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: '' })
+            });
+            document.getElementById('modal-ig-token').classList.remove('show');
+            igTokenLoaded = false;
+            updateIgApiButton(false);
+        }
+
+        function updateIgApiButton(hasToken) {
+            const label = document.getElementById('ig-api-btn-label');
+            if (label) label.textContent = hasToken ? 'API Conectada ✓' : 'Configurar API';
+        }
+
+        async function checkIgToken() {
+            try {
+                const r = await fetch(API + '/settings/instagram-token');
+                const data = await r.json();
+                igTokenLoaded = data.hasToken;
+                updateIgApiButton(data.hasToken);
+            } catch (e) { }
+        }
+
+        async function loadIgAvailableAccounts(showErrors = true) {
+            const listEl = document.getElementById('ig-available-accounts');
+            const statusEl = document.getElementById('ig-token-status');
+            try {
+                listEl.style.display = 'block';
+                listEl.innerHTML = '<p style="font-size:11px;color:var(--muted)">Carregando contas conectadas...</p>';
+                const r = await fetch(API + '/instagram/available-accounts');
+                const data = await r.json();
+                if (!r.ok) throw new Error(data.error || 'Erro ao listar contas');
+                listEl.innerHTML = data.length ? data.map(a => `
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid rgba(255,255,255,.06)">
+                        <div><strong style="font-size:12px;color:#fff">@${a.username}</strong><p style="font-size:10px;color:var(--muted)">${a.name || ''} · Página: ${a.pageName || a.pageId}</p></div>
+                        <div style="font-size:10px;color:var(--muted);text-align:right">${fmt(a.followers)} seguidores<br>${fmt(a.mediaCount)} posts</div>
+                    </div>`).join('') : '<p style="font-size:11px;color:var(--yellow)">Nenhuma conta Instagram Business/Creator conectada ao token.</p>';
+            } catch (e) {
+                if (showErrors) {
+                    statusEl.textContent = e.message;
+                    statusEl.style.color = 'var(--red)';
+                    statusEl.style.display = 'block';
+                }
+                listEl.style.display = 'none';
+            }
+        }
+
         // --- Init ---
         (async function init() {
             lucide.createIcons();
             await checkServer();
             await loadAccounts();
             await checkFbToken();
+            await checkIgToken();
             setInterval(checkServer, 15000);
         })();
     </script>
