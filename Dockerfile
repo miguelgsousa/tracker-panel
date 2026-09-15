@@ -36,6 +36,7 @@ ENV YT_DLP_PATH=/usr/local/bin/yt-dlp
 
 # Diretório de trabalho
 WORKDIR /app
+RUN install -d -m 0700 /run/secrets
 
 # Copiar package.json primeiro para cache de camadas do Docker
 COPY package*.json ./

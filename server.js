@@ -1,3 +1,5 @@
+// Load private app config before any integration/security environment snapshot.
+require('./lib/metrics-secrets').loadMetricsSecrets();
 const express = require('express');
 const cors = require('cors');
 const { execFile } = require('child_process');

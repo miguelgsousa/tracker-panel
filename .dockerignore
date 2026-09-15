@@ -15,3 +15,5 @@ tests
 scripts
 *test.mjs
 .github
+tracker-panel-meta.json
+secrets
