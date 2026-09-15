@@ -1108,6 +1108,8 @@
             }
         }
     </style>
+    <link rel="stylesheet" href="/metrics.css">
+    <script type="module" src="/metrics.js"></script>
 </head>
 
 <body>
@@ -1443,12 +1445,26 @@
         const months = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
         document.getElementById('date-display').textContent = `${now.getDate()} de ${months[now.getMonth()]} de ${now.getFullYear()}`;
 
+        // Escape at each HTML sink; URLs never become inline JavaScript.
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+        }
+        function inlineValue(value) {
+            return String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+        }
+        function safeUrl(value) {
+            try {
+                const url = new URL(String(value));
+                return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : '';
+            } catch { return ''; }
+        }
+
         // --- Format numbers ---
         function fmt(n) {
             if (n === null || n === undefined) return '—';
             if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
             if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
-            return String(n);
+            return escapeHtml(n);
         }
 
         function fmtDuration(seconds) {
@@ -1767,9 +1783,9 @@
         </div>
         <div style="display:flex;gap:8px">
             <button class="btn btn-outline btn-sm" onclick="openFolderModal('${platform}')"><i data-lucide="folder-plus" style="width:14px;height:14px"></i> Nova Pasta</button>
-            ${accounts.length > 0 ? `<button class="btn btn-outline btn-sm" onclick="fetchAllAccounts('${platform}', ${state.openFolder ? `'${state.openFolder}'` : 'null'})"><i data-lucide="refresh-cw" style="width:14px;height:14px"></i> ${state.openFolder ? 'Atualizar Pasta' : 'Atualizar Tudo'}</button>` : ''}
-            ${platform === 'facebook' ? `<button class="btn btn-outline btn-sm" onclick="openFbTokenModal()" style="border-color:rgba(24,119,242,.3);color:#1877f2"><i data-lucide="key" style="width:14px;height:14px"></i> <span id="fb-api-btn-label">Configurar API</span></button>` : ''}
-            ${platform === 'instagram' ? `<button class="btn btn-outline btn-sm" onclick="openIgTokenModal()" style="border-color:rgba(225,48,108,.3);color:#e1306c"><i data-lucide="key" style="width:14px;height:14px"></i> <span id="ig-api-btn-label">Configurar API</span></button>` : ''}
+            ${accounts.length > 0 ? `<button class="btn btn-outline btn-sm" onclick="fetchAllAccounts('${platform}', ${state.openFolder ? `'${inlineValue(state.openFolder)}'` : 'null'})"><i data-lucide="refresh-cw" style="width:14px;height:14px"></i> ${state.openFolder ? 'Atualizar Pasta' : 'Atualizar Tudo'}</button>` : ''}
+
+
             <button class="btn btn-primary btn-sm" onclick="openAddModal('${platform}')"><i data-lucide="plus" style="width:14px;height:14px"></i> Adicionar Perfil</button>
         </div>
     </div>`;
@@ -1792,34 +1808,7 @@
                     `;
                 }
 
-                if (platform === 'instagram') {
-                    const igWithMetrics = accounts.filter(a => a.metrics && !a.metrics.error);
-                    const totals = igWithMetrics.reduce((acc, a) => {
-                        const m = a.metrics || {};
-                        acc.todayViews += m.todayViews || 0;
-                        acc.todayReach += m.todayReach || 0;
-                        acc.followers += m.followers || 0;
-                        acc.recentViews += m.totalRecentViews || 0;
-                        acc.interactions += m.totalInteractions || m.todayInteractions || 0;
-                        return acc;
-                    }, { todayViews: 0, todayReach: 0, followers: 0, recentViews: 0, interactions: 0 });
-                    const topAccounts = [...igWithMetrics]
-                        .sort((a, b) => ((b.metrics?.todayViews || b.metrics?.totalRecentViews || 0) - (a.metrics?.todayViews || a.metrics?.totalRecentViews || 0)))
-                        .slice(0, 5);
-                    html += `<div class="bento" style="margin-bottom:24px">
-                        <div class="glass" style="padding:20px"><span class="stat-label">Views Hoje</span><p class="stat-value" style="color:#e1306c;margin-top:10px">${fmt(totals.todayViews)}</p><p style="font-size:10px;color:var(--muted);margin-top:6px">soma das contas via Graph API</p></div>
-                        <div class="glass" style="padding:20px"><span class="stat-label">Reach Hoje</span><p class="stat-value" style="color:#fff;margin-top:10px">${fmt(totals.todayReach)}</p></div>
-                        <div class="glass" style="padding:20px"><span class="stat-label">Seguidores</span><p class="stat-value" style="color:#fff;margin-top:10px">${fmt(totals.followers)}</p></div>
-                        <div class="glass" style="padding:20px"><span class="stat-label">Views Recentes</span><p class="stat-value" style="color:var(--cyan);margin-top:10px">${fmt(totals.recentViews)}</p></div>
-                        <div class="glass col4" style="padding:20px">
-                            <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px">
-                                <h3 style="font-size:14px;font-weight:700;color:#fff">Ranking de contas Instagram</h3>
-                                <span style="font-size:10px;color:var(--muted)">${igWithMetrics.length}/${accounts.length} com métricas</span>
-                            </div>
-                            ${topAccounts.length ? topAccounts.map((a, idx) => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:1px solid rgba(255,255,255,.06)"><div style="display:flex;align-items:center;gap:10px"><span style="font-size:11px;color:var(--muted);width:18px">#${idx + 1}</span><strong style="font-size:12px;color:#fff">@${a.handle}</strong><span style="font-size:10px;color:var(--muted)">${fmt(a.metrics?.followers || 0)} seg.</span></div><div style="display:flex;gap:18px;text-align:right"><span style="font-size:11px;color:#fff"><b>${fmt(a.metrics?.todayViews || 0)}</b> hoje</span><span style="font-size:11px;color:var(--cyan)"><b>${fmt(a.metrics?.totalRecentViews || 0)}</b> recentes</span></div></div>`).join('') : `<p style="font-size:12px;color:var(--muted)">Configure a API e atualize as contas para ver o consolidado.</p>`}
-                        </div>
-                    </div>`;
-                }
+
 
                 // Render folders
                 if (folders.length > 0 || state.openFolder !== null) {
@@ -1841,25 +1830,25 @@
                         folders.forEach(f => {
                             const fAccounts = accounts.filter(a => a.folderId === f.id);
                             html += `
-                            <div class="folder-card" id="folder-${f.id}"
+                            <div class="folder-card" id="folder-${escapeHtml(f.id)}"
                                 draggable="true"
-                                ondragstart="handleFolderDragStart(event, '${f.id}', '${platform}')"
+                                ondragstart="handleFolderDragStart(event, '${inlineValue(f.id)}', '${platform}')"
                                 ondragend="handleFolderDragEnd(event)"
-                                ondragover="draggedFolderId ? handleFolderDragOver(event, '${f.id}') : handleDragOver(event)" 
+                                ondragover="draggedFolderId ? handleFolderDragOver(event, '${inlineValue(f.id)}') : handleDragOver(event)"
                                 ondragleave="draggedFolderId ? handleFolderDragLeave(event) : handleDragLeave(event)" 
-                                ondrop="draggedFolderId ? handleFolderDrop(event, '${f.id}', '${platform}') : handleDropOnFolder(event, '${f.id}', '${platform}')" 
-                                onclick="platformState['${platform}'].openFolder='${f.id}'; renderPlatformTab('${platform}')">
+                                ondrop="draggedFolderId ? handleFolderDrop(event, '${inlineValue(f.id)}', '${platform}') : handleDropOnFolder(event, '${inlineValue(f.id)}', '${platform}')"
+                                onclick="platformState['${platform}'].openFolder='${inlineValue(f.id)}'; renderPlatformTab('${platform}')">
                                 <div class="folder-drag-handle" title="Arrastar para reordenar">
                                     <i data-lucide="grip-vertical" style="width:16px;height:16px"></i>
                                 </div>
                                 <div class="folder-icon"><i data-lucide="folder" style="width:24px;height:24px"></i></div>
                                 <div style="flex:1;min-width:0">
-                                    <p style="font-size:14px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${f.name}</p>
+                                    <p style="font-size:14px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(f.name)}</p>
                                     <p style="font-size:11px;color:var(--muted)">${fAccounts.length} conta(s)</p>
                                 </div>
                                 <div class="folder-actions">
-                                    <button onclick="openEditFolderModal(event, '${f.id}', '${platform}')" title="Renomear pasta"><i data-lucide="pencil" style="width:14px;height:14px"></i></button>
-                                    <button onclick="deleteFolder(event, '${f.id}', '${platform}')" title="Apagar pasta" style="color:var(--red)"><i data-lucide="trash-2" style="width:14px;height:14px"></i></button>
+                                    <button onclick="openEditFolderModal(event, '${inlineValue(f.id)}', '${platform}')" title="Renomear pasta"><i data-lucide="pencil" style="width:14px;height:14px"></i></button>
+                                    <button onclick="deleteFolder(event, '${inlineValue(f.id)}', '${platform}')" title="Apagar pasta" style="color:var(--red)"><i data-lucide="trash-2" style="width:14px;height:14px"></i></button>
                                 </div>
                             </div>`;
                         });
@@ -1874,7 +1863,7 @@
 
                 let fName = state.openFolder ? (folders.find(x => x.id === state.openFolder)?.name || 'Pasta') : 'Contas Principais';
 
-                html += `<h3 style="font-size:14px;font-weight:700;color:#fff;margin-bottom:12px">${fName}</h3>`;
+                html += `<h3 style="font-size:14px;font-weight:700;color:#fff;margin-bottom:12px">${escapeHtml(fName)}</h3>`;
 
                 if (displayedAccounts.length === 0) {
                     html += `<p style="font-size:12px;color:var(--muted);margin-bottom:24px">Nenhuma conta nesta view. Adicione ou arraste contas para cá.</p>`;
@@ -1890,45 +1879,45 @@
                     const vidCount = (account.recentContent || []).length;
                     html += `
                 <div class="profile-card ${isSelected ? 'selected' : ''} ${isMultiSelected ? 'multi-selected' : ''}" 
-                     id="card-${account.id}" 
+                     id="card-${escapeHtml(account.id)}"
                      draggable="true" 
-                     ondragstart="handleDragStart(event, '${account.id}', '${platform}')" 
+                     ondragstart="handleDragStart(event, '${inlineValue(account.id)}', '${platform}')"
                      ondragend="handleDragEnd(event)"
-                     onclick="platformState['${platform}'].selectedProfile='${account.id}';renderPlatformTab('${platform}')">
+                     onclick="platformState['${platform}'].selectedProfile='${inlineValue(account.id)}';renderPlatformTab('${platform}')">
                      
-                    <div class="checkbox-custom ${isMultiSelected ? 'checked' : ''}" onclick="toggleSelect(event, '${platform}', '${account.id}')">
+                    <div class="checkbox-custom ${isMultiSelected ? 'checked' : ''}" onclick="toggleSelect(event, '${platform}', '${inlineValue(account.id)}')">
                         ${isMultiSelected ? '<i data-lucide="check" style="width:12px;height:12px"></i>' : ''}
                     </div>
 
                     <div class="avatar" style="padding:0;overflow:hidden">
-                        ${hasMetrics && account.metrics.avatar ? `<img src="${account.metrics.avatar}" style="width:100%;height:100%;object-fit:cover" onerror="this.onerror=null;this.parentElement.innerHTML='${account.handle[0].toUpperCase()}'">` : account.handle[0].toUpperCase()}
+                        ${hasMetrics && safeUrl(account.metrics.avatar) ? `<img src="${escapeHtml(safeUrl(account.metrics.avatar))}" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">` : escapeHtml(String(account.handle || '?')[0].toUpperCase())}
                     </div>
                     <div style="flex:1;min-width:0">
                         <div style="display:flex;align-items:center;gap:8px">
-                            <p style="font-size:14px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${account.name || account.handle}</p>
+                            <p style="font-size:14px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(account.name || account.handle)}</p>
                             ${isSelected ? '<span style="font-size:8px;background:rgba(0,217,255,.2);color:var(--cyan);padding:2px 6px;border-radius:4px;font-weight:700">ATIVO</span>' : ''}
                         </div>
-                        <p style="font-size:11px;color:var(--muted)">@${account.handle}</p>
+                        <p style="font-size:11px;color:var(--muted)">@${escapeHtml(account.handle)}</p>
                         ${hasMetrics ? `<div style="display:flex;gap:12px;margin-top:8px">
                             <div><p style="font-size:16px;font-weight:700;color:#fff;font-family:'Space Grotesk'">${fmt(followers)}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">${followerLabel}</p></div>
                             <div><p style="font-size:16px;font-weight:700;color:#fff;font-family:'Space Grotesk'">${fmt(views)}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">${platform === 'instagram' ? 'views hoje' : 'views'}</p></div>
                             ${platform === 'youtube' && account.metrics.shortCount !== undefined
-                                ? `<div><p style="font-size:16px;font-weight:700;color:var(--cyan);font-family:'Space Grotesk'">${account.metrics.videoCount || 0}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">vídeos</p></div>
-                                   <div><p style="font-size:16px;font-weight:700;color:var(--red);font-family:'Space Grotesk'">${account.metrics.shortCount || 0}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">shorts</p></div>`
+                                ? `<div><p style="font-size:16px;font-weight:700;color:var(--cyan);font-family:'Space Grotesk'">${fmt(account.metrics.videoCount || 0)}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">vídeos</p></div>
+                                   <div><p style="font-size:16px;font-weight:700;color:var(--red);font-family:'Space Grotesk'">${fmt(account.metrics.shortCount || 0)}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">shorts</p></div>`
                                 : platform === 'facebook' && account.metrics.pageLikes
                                     ? `<div><p style="font-size:16px;font-weight:700;color:#1877f2;font-family:'Space Grotesk'">${fmt(account.metrics.pageLikes)}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">curtidas</p></div>
                                        <div><p style="font-size:16px;font-weight:700;color:var(--cyan);font-family:'Space Grotesk'">${vidCount}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">vídeos</p></div>`
                                     : `<div><p style="font-size:16px;font-weight:700;color:var(--cyan);font-family:'Space Grotesk'">${vidCount}</p><p style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">vídeos</p></div>`
                             }
-                        </div>` : account.metrics?.error ? `<p style="font-size:10px;color:var(--red);margin-top:6px">${account.metrics.message || account.metrics.error}</p>` : '<p style="font-size:10px;color:var(--muted);margin-top:6px">Clique em Buscar para carregar dados</p>'}
+                        </div>` : account.metrics?.error ? `<p style="font-size:10px;color:var(--red);margin-top:6px">${escapeHtml(account.metrics.message || account.metrics.error)}</p>` : '<p style="font-size:10px;color:var(--muted);margin-top:6px">Clique em Buscar para carregar dados</p>'}
                     </div>
                     <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
                         ${fetchingAccounts.has(account.id)
                             ? `<button class="btn btn-outline btn-sm" disabled style="font-size:10px;padding:4px 8px" title="Buscando..."><span class="spinner"></span></button>`
-                            : `<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();fetchAccount('${platform}','${account.id}')" id="fetch-btn-${account.id}" style="font-size:10px;padding:4px 8px" title="Atualizar"><i data-lucide="refresh-cw" style="width:11px;height:11px"></i></button>`
+                            : `<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();fetchAccount('${platform}','${inlineValue(account.id)}')" id="fetch-btn-${escapeHtml(account.id)}" style="font-size:10px;padding:4px 8px" title="Atualizar"><i data-lucide="refresh-cw" style="width:11px;height:11px"></i></button>`
                         }
-                        ${['twitter', 'facebook'].includes(platform) ? `<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();openCookieModal('${platform}','${account.id}', '${btoa(account.cookie || '')}')" style="font-size:10px;padding:4px 8px" title="Editar Cookies"><i data-lucide="key" style="width:11px;height:11px"></i></button>` : ''}
-                        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteAccount('${platform}','${account.id}')" style="font-size:10px;padding:4px 8px" title="Excluir"><i data-lucide="trash-2" style="width:11px;height:11px"></i></button>
+                        ${['twitter', 'facebook'].includes(platform) ? `<button class="btn btn-outline btn-sm" onclick="event.stopPropagation();openCookieModal('${platform}','${inlineValue(account.id)}', '')" style="font-size:10px;padding:4px 8px" title="Editar Cookies"><i data-lucide="key" style="width:11px;height:11px"></i></button>` : ''}
+                        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteAccount('${platform}','${inlineValue(account.id)}')" style="font-size:10px;padding:4px 8px" title="Excluir"><i data-lucide="trash-2" style="width:11px;height:11px"></i></button>
                     </div>
                 </div>`;
                 });
@@ -1939,7 +1928,7 @@
                     html += `
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px">
                     <div>
-                        <h3 style="font-size:16px;font-weight:700;color:#fff">Conteúdo de @${selected.handle}</h3>
+                        <h3 style="font-size:16px;font-weight:700;color:#fff">Conteúdo de @${escapeHtml(selected.handle)}</h3>
                         <p style="font-size:11px;color:var(--muted)">${videos.length} item${videos.length !== 1 ? 's' : ''} encontrado${videos.length !== 1 ? 's' : ''}</p>
                     </div>
                     <div style="display:flex;align-items:center;gap:12px">
@@ -1970,15 +1959,15 @@
                         html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">`;
                         videos.forEach(v => {
                             html += `
-                    <div class="vid-card" onclick="window.open('${v.url}','_blank')">
+                    <div class="vid-card" data-url="${escapeHtml(safeUrl(v.url))}" onclick="if(this.dataset.url) window.open(this.dataset.url,'_blank','noopener,noreferrer')">
                         <div class="vid-thumb">
-                            ${v.thumbnail ? `<img src="${v.thumbnail}" alt="" onerror="this.style.display='none'">` : ''}
+                            ${v.thumbnail ? `<img src="${escapeHtml(safeUrl(v.thumbnail))}" alt="" onerror="this.style.display='none'">` : ''}
                             <i data-lucide="play-circle" style="width:32px;height:32px;color:rgba(255,255,255,.3);position:absolute"></i>
                             ${v.type === 'short' ? `<span style="position:absolute;top:6px;left:6px;background:var(--red);padding:2px 6px;border-radius:4px;font-size:9px;font-weight:700;color:#fff">SHORT</span>` : ''}
-                            ${v.durationStr || v.duration ? `<span style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,.85);padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">${v.durationStr || fmtDuration(v.duration)}</span>` : ''}
+                            ${v.durationStr || v.duration ? `<span style="position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,.85);padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">${escapeHtml(v.durationStr || fmtDuration(v.duration))}</span>` : ''}
                         </div>
                         <div style="padding:12px">
-                            <p style="font-size:12px;font-weight:600;color:#fff;line-height:1.4;margin-bottom:8px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${v.title || 'Sem título'}</p>
+                            <p style="font-size:12px;font-weight:600;color:#fff;line-height:1.4;margin-bottom:8px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${escapeHtml(v.title || 'Sem título')}</p>
                             <div style="display:flex;gap:10px;font-size:10px;color:var(--muted);flex-wrap:wrap">
                                 <span style="display:flex;align-items:center;gap:3px"><i data-lucide="eye" style="width:12px;height:12px"></i>${fmt(v.views)}</span>
                                 <span style="display:flex;align-items:center;gap:3px"><i data-lucide="heart" style="width:12px;height:12px"></i>${fmt(v.likes)}</span>
@@ -1994,14 +1983,14 @@
                             <th style="width:100px">Thumb</th><th>Título</th><th style="width:90px">Views</th><th style="width:80px">Likes</th><th style="width:100px">Comentários</th>${videos[0]?.shares !== undefined ? '<th style="width:90px">Shares</th>' : ''}<th style="width:70px">Duração</th>
                         </tr></thead><tbody>`;
                         videos.forEach(v => {
-                            html += `<tr class="video-row" onclick="window.open('${v.url}','_blank')">
-                                <td>${v.thumbnail ? `<img src="${v.thumbnail}" class="mini-thumb" onerror="this.style.display='none'">` : '<div class="mini-thumb" style="display:flex;align-items:center;justify-content:center"><i data-lucide="video" style="width:16px;height:16px;color:var(--muted)"></i></div>'}</td>
-                                <td><p style="font-size:12px;font-weight:600;color:#fff;line-height:1.3;max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${v.type === 'short' ? '<span style="background:var(--red);padding:1px 5px;border-radius:3px;font-size:8px;font-weight:700;color:#fff;margin-right:4px">SHORT</span>' : ''}${v.title || 'Sem título'}</p></td>
+                            html += `<tr class="video-row" data-url="${escapeHtml(safeUrl(v.url))}" onclick="if(this.dataset.url) window.open(this.dataset.url,'_blank','noopener,noreferrer')">
+                                <td>${v.thumbnail ? `<img src="${escapeHtml(safeUrl(v.thumbnail))}" class="mini-thumb" onerror="this.style.display='none'">` : '<div class="mini-thumb" style="display:flex;align-items:center;justify-content:center"><i data-lucide="video" style="width:16px;height:16px;color:var(--muted)"></i></div>'}</td>
+                                <td><p style="font-size:12px;font-weight:600;color:#fff;line-height:1.3;max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${v.type === 'short' ? '<span style="background:var(--red);padding:1px 5px;border-radius:3px;font-size:8px;font-weight:700;color:#fff;margin-right:4px">SHORT</span>' : ''}${escapeHtml(v.title || 'Sem título')}</p></td>
                                 <td style="font-weight:700;color:#fff;font-family:'Space Grotesk'">${fmt(v.views)}</td>
                                 <td style="font-weight:700;color:var(--red);font-family:'Space Grotesk'">${fmt(v.likes)}</td>
                                 <td style="font-weight:600;color:var(--muted)">${fmt(v.comments)}</td>
                                 ${v.shares !== undefined ? `<td style="font-weight:600;color:var(--cyan)">${fmt(v.shares)}</td>` : ''}
-                                <td style="color:var(--muted);font-size:11px">${v.durationStr || fmtDuration(v.duration) || '—'}</td>
+                                <td style="color:var(--muted);font-size:11px">${escapeHtml(v.durationStr || fmtDuration(v.duration) || '—')}</td>
                             </tr>`;
                         });
                         html += `</tbody></table></div>`;
@@ -2009,19 +1998,23 @@
 
                     if (videos.length === 0) {
                         const filterName = state.contentFilter === 'short' ? 'Shorts' : 'Vídeos longos';
-                        html += `<div class="glass" style="padding:24px;text-align:center"><p style="font-size:12px;color:var(--muted)">Nenhum ${filterName} encontrado para @${selected.handle}.</p></div>`;
+                        html += `<div class="glass" style="padding:24px;text-align:center"><p style="font-size:12px;color:var(--muted)">Nenhum ${filterName} encontrado para @${escapeHtml(selected.handle)}.</p></div>`;
                     }
 
                 } else if (selected && selected.metrics?.error) {
-                    html += `<div class="glass" style="padding:24px;text-align:center"><p style="font-size:12px;color:var(--red)">${selected.metrics.message || selected.metrics.error}</p></div>`;
+                    html += `<div class="glass" style="padding:24px;text-align:center"><p style="font-size:12px;color:var(--red)">${escapeHtml(selected.metrics.message || selected.metrics.error)}</p></div>`;
                 } else if (selected && allVideos.length === 0 && selected.metrics) {
-                    html += `<div class="glass" style="padding:24px;text-align:center"><p style="font-size:12px;color:var(--muted)">Nenhum vídeo encontrado para @${selected.handle}. Tente atualizar os dados.</p></div>`;
+                    html += `<div class="glass" style="padding:24px;text-align:center"><p style="font-size:12px;color:var(--muted)">Nenhum vídeo encontrado para @${escapeHtml(selected.handle)}. Tente atualizar os dados.</p></div>`;
                 } else if (selected) {
-                    html += `<div class="glass" style="padding:24px;text-align:center"><p style="font-size:12px;color:var(--muted)">Clique no botão de atualizar no perfil de @${selected.handle} para carregar seus vídeos.</p></div>`;
+                    html += `<div class="glass" style="padding:24px;text-align:center"><p style="font-size:12px;color:var(--muted)">Clique no botão de atualizar no perfil de @${escapeHtml(selected.handle)} para carregar seus vídeos.</p></div>`;
                 }
             }
 
+            const metricsRoot = container.querySelector('.tracker-metrics');
+            if (metricsRoot) metricsRoot.remove();
             container.innerHTML = html;
+            if (metricsRoot) container.prepend(metricsRoot);
+            window.TrackerMetrics?.mount(platform);
             lucide.createIcons();
         }
         // --- Reports ---
@@ -2100,7 +2093,7 @@
             modalPlatform = platform;
             const config = PLATFORMS[platform];
             document.getElementById('modal-title').textContent = `Adicionar Conta — ${config.name}`;
-            document.getElementById('modal-desc').textContent = platform === 'instagram' ? 'Adicione uma conta Business/Creator que esteja conectada ao token da Instagram Graph API.' : `Insira o @handle ou URL do perfil/canal do ${config.name}`;
+            document.getElementById('modal-desc').textContent = platform === 'instagram' ? 'Para métricas privadas, conecte sua conta pelo OAuth no painel de métricas.' : `Insira o @handle ou URL do perfil/canal do ${config.name}`;
             document.getElementById('input-handle').placeholder = config.placeholder;
             document.getElementById('input-handle').value = '';
             document.getElementById('input-name').value = '';
@@ -2224,10 +2217,10 @@
         let cookiePlatform = null;
         let cookieAccountId = null;
 
-        function openCookieModal(platform, accountId, b64cookie) {
+        function openCookieModal(platform, accountId) {
             cookiePlatform = platform;
             cookieAccountId = accountId;
-            document.getElementById('input-edit-cookie').value = atob(b64cookie);
+            document.getElementById('input-edit-cookie').value = ''; // Write-only; never prefill stored credentials.
             document.getElementById('modal-cookie').classList.add('show');
             setTimeout(() => document.getElementById('input-edit-cookie').focus(), 100);
         }
@@ -2443,7 +2436,7 @@
                 if (!r.ok) throw new Error(data.error || 'Erro ao listar contas');
                 listEl.innerHTML = data.length ? data.map(a => `
                     <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid rgba(255,255,255,.06)">
-                        <div><strong style="font-size:12px;color:#fff">@${a.username}</strong><p style="font-size:10px;color:var(--muted)">${a.name || ''} · Página: ${a.pageName || a.pageId}</p></div>
+                        <div><strong style="font-size:12px;color:#fff">@${escapeHtml(a.username)}</strong><p style="font-size:10px;color:var(--muted)">${escapeHtml(a.name || '')} · Página: ${escapeHtml(a.pageName || a.pageId)}</p></div>
                         <div style="font-size:10px;color:var(--muted);text-align:right">${fmt(a.followers)} seguidores<br>${fmt(a.mediaCount)} posts</div>
                     </div>`).join('') : '<p style="font-size:11px;color:var(--yellow)">Nenhuma conta Instagram Business/Creator conectada ao token.</p>';
             } catch (e) {

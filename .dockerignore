@@ -3,4 +3,15 @@ node_modules
 .gitignore
 *.md
 .dockerignore
-.env.local
+.env
+.env.*
+accounts.json
+*.sqlite
+*.sqlite-*
+metrics-data
+*.log
+*.tmp
+tests
+scripts
+*test.mjs
+.github

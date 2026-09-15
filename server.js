@@ -21,9 +21,39 @@ const YT_DLP = process.env.YT_DLP_PATH
         ? path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python314', 'Scripts', 'yt-dlp.exe')
         : 'yt-dlp');
 
-app.use(cors());
+// Metrics must run BEFORE legacy CORS/body parsing: no cross-origin access and
+// no browser-supplied provider tokens. Its own authentication fails closed.
+const { createMetricsIntegration } = require('./lib/metrics-integration');
+const { createPanelSecurity, metricsEnabled, publicAccountData } = require('./lib/panel-security');
+const metricsIntegration = createMetricsIntegration();
+app.use(createPanelSecurity());
+app.use(metricsIntegration);
+if (!metricsEnabled(process.env)) app.use(cors());
+// All legacy JSON responses use the same recursive credential redactor.
+app.use((req, res, next) => {
+    const json = res.json.bind(res);
+    res.json = value => json(publicAccountData(value));
+    next();
+});
 app.use(express.json());
-app.use(express.static(__dirname));
+// Never expose repository files, accounts.json, .env, source or node_modules.
+const publicAssets = new Set(['index.html', 'metrics.js', 'metrics.css', 'metrics-cache.mjs', 'metrics-detail.mjs', 'metrics-presentation.mjs']);
+app.use((req, res, next) => {
+    if (!['GET', 'HEAD'].includes(req.method)) return next();
+    const filename = req.path === '/' ? 'index.html' : req.path.slice(1);
+    if (!publicAssets.has(filename)) return next();
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.sendFile(path.join(__dirname, filename));
+});
+// Retire the plaintext token setup surface. Connections now use encrypted OAuth.
+app.use(['/api/settings/facebook-token', '/api/settings/instagram-token', '/api/instagram/available-accounts'], (req, res) => {
+    res.status(410).json({ error: 'use_metrics_oauth', authStart: '/api/metrics/auth/start' });
+});
+const trackerPlatforms = new Set(['youtube', 'tiktok', 'instagram', 'facebook', 'twitter']);
+app.param('platform', (req, res, next, platform) => {
+    if (!trackerPlatforms.has(platform)) return res.status(400).json({ error: 'Invalid platform' });
+    next();
+});
 
 // --- Number formatter for logs ---
 function fmt(n) {
@@ -143,16 +173,7 @@ async function processInBatches(items, batchSize, processFn, onBatchComplete) {
 }
 
 
-// --- Meta / Instagram Graph API helpers ---
-const GRAPH_VERSION = process.env.GRAPH_VERSION || 'v21.0';
-const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
-
-function getInstagramToken(db) {
-    // Prefer the dedicated Instagram token, but keep the Facebook token as a fallback
-    // because the Instagram Graph API is served through Meta/Facebook Graph.
-    return db._settings?.instagramToken || db._settings?.facebookToken || '';
-}
-
+// Legacy provider-token consumers are retired; official metrics use OAuth.
 function cleanHandle(value) {
     return String(value || '')
         .trim()
@@ -162,267 +183,7 @@ function cleanHandle(value) {
         .trim();
 }
 
-async function graphGet(pathname, params = {}, accessToken, timeoutMs = 20000) {
-    const url = new URL(`${GRAPH_BASE}/${String(pathname).replace(/^\//, '')}`);
-    for (const [k, v] of Object.entries(params)) {
-        if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
-    }
-    url.searchParams.set('access_token', accessToken);
-    const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || data.error) {
-        const msg = data.error?.message || `Graph API HTTP ${response.status}`;
-        throw new Error(msg);
-    }
-    return data;
-}
-
-async function graphGetAll(pathname, params = {}, accessToken, limit = 100) {
-    const first = await graphGet(pathname, { ...params, limit }, accessToken);
-    const rows = [...(first.data || [])];
-    let next = first.paging?.next;
-    while (next && rows.length < 500) {
-        const response = await fetch(next, { signal: AbortSignal.timeout(20000) });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || data.error) break;
-        rows.push(...(data.data || []));
-        next = data.paging?.next;
-    }
-    return rows;
-}
-
-async function getManagedInstagramAccounts(accessToken) {
-    const fields = [
-        'id', 'name', 'access_token',
-        'instagram_business_account{id,username,name,profile_picture_url,followers_count,follows_count,media_count}'
-    ].join(',');
-    const pages = await graphGetAll('me/accounts', { fields }, accessToken, 100);
-    return pages
-        .filter(page => page.instagram_business_account)
-        .map(page => ({
-            pageId: page.id,
-            pageName: page.name,
-            pageAccessToken: page.access_token || accessToken,
-            ig: page.instagram_business_account
-        }));
-}
-
-function findManagedInstagramAccount(managedAccounts, account) {
-    const wanted = cleanHandle(account.handle).toLowerCase();
-    return managedAccounts.find(item =>
-        String(item.ig.id) === String(account.igUserId || account.handle) ||
-        String(item.ig.username || '').toLowerCase() === wanted ||
-        String(item.ig.name || '').toLowerCase() === wanted
-    );
-}
-
-function insightValue(insights, metricName) {
-    const row = (insights?.data || []).find(item => item.name === metricName);
-    const values = row?.values || [];
-    if (!values.length) return 0;
-    const last = values[values.length - 1]?.value;
-    return typeof last === 'number' ? last : parseInt(last || 0, 10) || 0;
-}
-
-async function tryInsightGroups(objectId, groups, token, period = null) {
-    for (const metrics of groups) {
-        try {
-            const params = { metric: metrics };
-            if (period) params.period = period;
-            return await graphGet(`${objectId}/insights`, params, token);
-        } catch (e) {
-            // Continue with narrower/older metric sets; Meta changes metric availability by API version,
-            // object type, account type, and permission set.
-        }
-    }
-    return { data: [] };
-}
-
-async function fetchInstagramGraphMetrics(account, db, onProgress = () => {}) {
-    const userToken = getInstagramToken(db);
-    if (!userToken) {
-        throw new Error('Configure o token da Instagram Graph API antes de atualizar. Use o botão "Configurar API" na aba Instagram.');
-    }
-
-    const managed = await getManagedInstagramAccounts(userToken);
-    const matched = findManagedInstagramAccount(managed, account);
-    if (!matched && !account.igUserId) {
-        const available = managed.map(item => `@${item.ig.username}`).join(', ') || 'nenhuma conta encontrada';
-        throw new Error(`Conta @${account.handle} não encontrada entre as contas Instagram conectadas ao token. Disponíveis: ${available}`);
-    }
-
-    const igId = matched?.ig.id || account.igUserId || account.handle;
-    const pageToken = matched?.pageAccessToken || userToken;
-    onProgress(10);
-
-    const profile = await graphGet(igId, {
-        fields: 'id,username,name,biography,website,profile_picture_url,followers_count,follows_count,media_count'
-    }, pageToken);
-
-    const accountInsights = await tryInsightGroups(igId, [
-        'views,reach,total_interactions,profile_views,website_clicks',
-        'views,reach,total_interactions',
-        'impressions,reach,profile_views,website_clicks',
-        'reach,profile_views,website_clicks'
-    ], pageToken, 'day');
-    onProgress(25);
-
-    const media = await graphGetAll(`${igId}/media`, {
-        fields: 'id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count',
-        limit: 50
-    }, pageToken, 50).catch(() => []);
-
-    let totalViews = 0, totalReach = 0, totalLikes = 0, totalComments = 0, totalShares = 0, totalSaved = 0, totalInteractions = 0;
-    const recentContent = [];
-    const maxItems = Math.min(media.length, 50);
-
-    for (let i = 0; i < maxItems; i++) {
-        const item = media[i];
-        const product = String(item.media_product_type || item.media_type || '').toUpperCase();
-        const metricGroups = product.includes('REELS') || item.media_type === 'VIDEO'
-            ? ['views,plays,reach,likes,comments,shares,saved,total_interactions', 'views,reach,likes,comments,shares,saved,total_interactions', 'plays,reach,saved,shares']
-            : ['views,impressions,reach,likes,comments,shares,saved,total_interactions', 'impressions,reach,saved,total_interactions', 'reach,saved'];
-        const mediaInsights = await tryInsightGroups(item.id, metricGroups, pageToken, null);
-
-        const views = insightValue(mediaInsights, 'views') || insightValue(mediaInsights, 'plays') || insightValue(mediaInsights, 'impressions') || 0;
-        const reach = insightValue(mediaInsights, 'reach') || 0;
-        const likes = insightValue(mediaInsights, 'likes') || item.like_count || 0;
-        const comments = insightValue(mediaInsights, 'comments') || item.comments_count || 0;
-        const shares = insightValue(mediaInsights, 'shares') || 0;
-        const saved = insightValue(mediaInsights, 'saved') || 0;
-        const interactions = insightValue(mediaInsights, 'total_interactions') || (likes + comments + shares + saved);
-
-        totalViews += views;
-        totalReach += reach;
-        totalLikes += likes;
-        totalComments += comments;
-        totalShares += shares;
-        totalSaved += saved;
-        totalInteractions += interactions;
-
-        recentContent.push({
-            id: item.id,
-            title: (item.caption || `${item.media_product_type || item.media_type || 'Instagram'} #${i + 1}`).slice(0, 120),
-            description: (item.caption || '').slice(0, 300),
-            url: item.permalink,
-            thumbnail: item.thumbnail_url || item.media_url,
-            views, reach, likes, comments, shares, saved, interactions,
-            uploadDate: item.timestamp,
-            timestamp: item.timestamp ? Math.floor(new Date(item.timestamp).getTime() / 1000) : null,
-            type: (item.media_product_type || item.media_type || 'media').toLowerCase()
-        });
-
-        if ((i + 1) % 10 === 0 || i === maxItems - 1) {
-            onProgress(25 + Math.round(((i + 1) / Math.max(maxItems, 1)) * 65));
-        }
-    }
-
-    const dailyViews = insightValue(accountInsights, 'views') || insightValue(accountInsights, 'impressions') || 0;
-    const dailyReach = insightValue(accountInsights, 'reach') || 0;
-    const profileViews = insightValue(accountInsights, 'profile_views') || 0;
-    const websiteClicks = insightValue(accountInsights, 'website_clicks') || 0;
-    const dailyInteractions = insightValue(accountInsights, 'total_interactions') || 0;
-
-    account.igUserId = profile.id;
-    account.handle = profile.username || account.handle;
-    account.name = profile.name || account.name || profile.username;
-    account.url = `https://www.instagram.com/${profile.username || account.handle}/`;
-
-    return {
-        metrics: {
-            source: 'instagram_graph_api',
-            graphVersion: GRAPH_VERSION,
-            igUserId: profile.id,
-            pageId: matched?.pageId || account.pageId || null,
-            pageName: matched?.pageName || account.pageName || null,
-            avatar: profile.profile_picture_url || matched?.ig.profile_picture_url || null,
-            followers: profile.followers_count || matched?.ig.followers_count || 0,
-            following: profile.follows_count || matched?.ig.follows_count || 0,
-            postCount: profile.media_count || matched?.ig.media_count || recentContent.length,
-            fullName: profile.name || profile.username,
-            website: profile.website || null,
-            biography: profile.biography || null,
-            todayViews: dailyViews,
-            todayReach: dailyReach,
-            todayInteractions: dailyInteractions,
-            profileViews,
-            websiteClicks,
-            totalRecentViews: totalViews,
-            totalRecentReach: totalReach,
-            totalRecentLikes: totalLikes,
-            totalRecentComments: totalComments,
-            totalShares,
-            totalSaved,
-            totalInteractions,
-            engagementRate: (profile.followers_count || 0) > 0 ? parseFloat((totalInteractions / profile.followers_count * 100).toFixed(2)) : 0,
-            videoCount: recentContent.length,
-            lastMetricDate: new Date().toISOString().slice(0, 10)
-        },
-        recentContent
-    };
-}
-
 // --- API Routes ---
-
-// --- Settings API (Facebook Token) ---
-app.get('/api/settings/facebook-token', (req, res) => {
-    const db = loadDB();
-    const token = db._settings?.facebookToken || '';
-    res.json({ token: token ? '••••' + token.slice(-8) : '', hasToken: !!token });
-});
-
-app.post('/api/settings/facebook-token', (req, res) => {
-    const { token } = req.body;
-    const db = loadDB();
-    if (!db._settings) db._settings = {};
-    db._settings.facebookToken = token || '';
-    saveDB(db);
-    console.log(`[Settings] Facebook API token ${token ? 'saved' : 'removed'}`);
-    res.json({ success: true, hasToken: !!token });
-});
-
-
-// --- Settings API (Instagram Graph API Token) ---
-app.get('/api/settings/instagram-token', (req, res) => {
-    const db = loadDB();
-    const token = db._settings?.instagramToken || '';
-    const fallback = !token && !!db._settings?.facebookToken;
-    const shown = token || db._settings?.facebookToken || '';
-    res.json({ token: shown ? '••••' + shown.slice(-8) : '', hasToken: !!shown, usingFacebookFallback: fallback });
-});
-
-app.post('/api/settings/instagram-token', (req, res) => {
-    const { token } = req.body;
-    const db = loadDB();
-    if (!db._settings) db._settings = {};
-    db._settings.instagramToken = token || '';
-    saveDB(db);
-    console.log(`[Settings] Instagram Graph API token ${token ? 'saved' : 'removed'}`);
-    res.json({ success: true, hasToken: !!token });
-});
-
-// List Instagram Business/Creator accounts connected to the configured Meta token.
-app.get('/api/instagram/available-accounts', async (req, res) => {
-    try {
-        const db = loadDB();
-        const token = getInstagramToken(db);
-        if (!token) return res.status(400).json({ error: 'Instagram Graph API token is not configured' });
-        const accounts = await getManagedInstagramAccounts(token);
-        res.json(accounts.map(item => ({
-            igUserId: item.ig.id,
-            username: item.ig.username,
-            name: item.ig.name || item.ig.username,
-            pageId: item.pageId,
-            pageName: item.pageName,
-            avatar: item.ig.profile_picture_url || null,
-            followers: item.ig.followers_count || 0,
-            following: item.ig.follows_count || 0,
-            mediaCount: item.ig.media_count || 0
-        })));
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
 
 // --- Folders API ---
 app.get('/api/folders', (req, res) => {
@@ -510,7 +271,11 @@ app.put('/api/folders/:platform/reorder', (req, res) => {
 
 // GET all accounts
 app.get('/api/accounts', (req, res) => {
-    res.json(loadDB());
+    const db = loadDB();
+    // Old installations may still contain plaintext _settings. Never return it.
+    const visible = Object.fromEntries([...trackerPlatforms].map(p => [p, db[p] || []]));
+    visible._folders = db._folders || {};
+    res.json(visible);
 });
 
 // GET accounts for a specific platform
@@ -546,38 +311,6 @@ app.post('/api/accounts/:platform', async (req, res) => {
         cookie: platform === 'instagram' ? null : (req.body.cookie || null)
     };
 
-    if (platform === 'instagram') {
-        const token = getInstagramToken(db);
-        if (token) {
-            try {
-                const managed = await getManagedInstagramAccounts(token);
-                const matched = findManagedInstagramAccount(managed, account);
-                if (matched) {
-                    account.igUserId = matched.ig.id;
-                    account.pageId = matched.pageId;
-                    account.pageName = matched.pageName;
-                    account.handle = matched.ig.username || account.handle;
-                    account.name = name || matched.ig.name || matched.ig.username || account.name;
-                    account.url = `https://www.instagram.com/${account.handle}/`;
-                    account.metrics = {
-                        source: 'instagram_graph_api',
-                        igUserId: matched.ig.id,
-                        pageId: matched.pageId,
-                        pageName: matched.pageName,
-                        avatar: matched.ig.profile_picture_url || null,
-                        followers: matched.ig.followers_count || 0,
-                        following: matched.ig.follows_count || 0,
-                        postCount: matched.ig.media_count || 0,
-                        totalRecentViews: 0,
-                        todayViews: 0
-                    };
-                }
-            } catch (e) {
-                console.log(`[Instagram] Could not pre-resolve account on add: ${e.message}`);
-            }
-        }
-    }
-
     db[platform].push(account);
     saveDB(db);
     res.status(201).json(account);
@@ -609,6 +342,7 @@ app.patch('/api/accounts/:platform/:id/cookie', (req, res) => {
 // POST fetch metrics for a single account
 app.post('/api/fetch/:platform/:id', async (req, res) => {
     const { platform, id } = req.params;
+    if (platform === 'instagram') return res.status(410).json({ error: 'use_metrics_oauth', authStart: '/api/metrics/auth/start?provider=instagram' });
     const db = loadDB();
     const account = (db[platform] || []).find(a => a.id === id);
     if (!account) return res.status(404).json({ error: 'Account not found' });
@@ -1252,24 +986,9 @@ app.post('/api/fetch/:platform/:id', async (req, res) => {
             // Cleanup temp cookie file
             if (cookieTmpFile) try { fs.unlinkSync(cookieTmpFile); } catch (e) { }
 
-        } else if (platform === 'instagram') {
-            try {
-                console.log(`  [Instagram] Using Instagram Graph API only...`);
-                const result = await fetchInstagramGraphMetrics(account, db, progress => {
-                    res.write(JSON.stringify({ status: 'update', progress }) + '\n');
-                });
-                metrics = result.metrics;
-                recentContent = result.recentContent;
-                console.log(`  [Instagram] Graph API OK: @${account.handle}, ${fmt(metrics.todayViews || 0)} views hoje, ${recentContent.length} mídias`);
-            } catch (e) {
-                metrics = { error: 'Falha na Instagram Graph API.', message: e.message, source: 'instagram_graph_api' };
-            }
-
         } else if (platform === 'facebook') {
             try {
                 console.log(`  [Facebook] Starting extraction...`);
-                const db2 = loadDB();
-                const fbToken = db2._settings?.facebookToken || '';
                 const handle = account.handle;
 
                 let pageFollowers = 0, pageLikes = 0, avatarUrl = null, pageName = null, pageCategory = null;
@@ -1287,98 +1006,7 @@ app.post('/api/fetch/:platform/:id', async (req, res) => {
                     }
                 }
 
-                // ============================================================
-                // STRATEGY 1: Graph API (when token is available)
-                // ============================================================
-                if (fbToken) {
-                    try {
-                        console.log(`  [Facebook] Strategy 1: Graph API with token...`);
-                        const FB_API = 'https://graph.facebook.com/v21.0';
-
-                        // Step 1: Get all pages this user manages to find matching page + page token
-                        let pageAccessToken = fbToken; // fallback to user token
-                        try {
-                            const accountsRes = await fetch(`${FB_API}/me/accounts?fields=id,name,access_token,category,fan_count,followers_count&access_token=${fbToken}`);
-                            const accountsData = await accountsRes.json();
-                            const managedPages = accountsData.data || [];
-                            console.log(`  [Facebook] User manages ${managedPages.length} pages`);
-
-                            if (managedPages.length > 0) {
-                                // Try to match by ID or name
-                                const matched = managedPages.find(p =>
-                                    p.id === pageId ||
-                                    p.name?.toLowerCase() === pageId.toLowerCase() ||
-                                    p.name?.toLowerCase().includes(pageId.toLowerCase())
-                                );
-
-                                if (matched) {
-                                    console.log(`  [Facebook] Matched managed page: "${matched.name}" (ID: ${matched.id})`);
-                                    pageId = matched.id;
-                                    pageAccessToken = matched.access_token || fbToken;
-                                } else {
-                                    // If pageId is numeric and not matched, try the first page
-                                    console.log(`  [Facebook] Page "${pageId}" not found in managed pages. Trying direct access...`);
-                                }
-                            }
-                        } catch (e) {
-                            console.log(`  [Facebook] Failed to fetch managed pages: ${e.message}`);
-                        }
-
-                        // Step 2: Fetch page info using the best token available
-                        const pageFields = 'id,name,about,category,fan_count,followers_count,picture.type(large),cover,link,website,description';
-                        const pageRes = await fetch(`${FB_API}/${pageId}?fields=${pageFields}&access_token=${pageAccessToken}`);
-                        const pageData = await pageRes.json();
-
-                        if (pageData.error) throw new Error(pageData.error.message || 'Erro Graph API');
-
-                        pageId = pageData.id;
-                        pageName = pageData.name || handle;
-                        pageFollowers = pageData.followers_count || 0;
-                        pageLikes = pageData.fan_count || 0;
-                        pageCategory = pageData.category || null;
-                        avatarUrl = pageData.picture?.data?.url || null;
-
-                        console.log(`  [Facebook] Page: ${pageName} (ID: ${pageId}) — ${fmt(pageFollowers)} followers, ${fmt(pageLikes)} likes`);
-
-                        account.metrics = { avatar: avatarUrl, followers: pageFollowers, pageLikes, pageName, pageCategory, totalRecentViews: 0, totalRecentLikes: 0, totalRecentComments: 0, videoCount: 0 };
-                        saveDB(db);
-                        res.write(JSON.stringify({ status: 'update', progress: 10 }) + '\n');
-
-                        // Fetch posts and videos
-                        const postsFields = 'id,message,created_time,full_picture,permalink_url,shares,type,likes.summary(true).limit(0),comments.summary(true).limit(0)';
-                        const videoFields = 'id,title,description,length,created_time,permalink_url,thumbnails,views,likes.summary(true).limit(0),comments.summary(true).limit(0)';
-
-                        const [postsData, videosData] = await Promise.all([
-                            fetch(`${FB_API}/${pageId}/posts?fields=${postsFields}&limit=25&access_token=${pageAccessToken}`).then(r => r.json()).catch(() => ({ data: [] })),
-                            fetch(`${FB_API}/${pageId}/videos?fields=${videoFields}&limit=30&access_token=${pageAccessToken}`).then(r => r.json()).catch(() => ({ data: [] }))
-                        ]);
-
-                        const posts = (postsData.error ? [] : postsData.data) || [];
-                        const videos = (videosData.error ? [] : videosData.data) || [];
-
-                        for (const v of videos) {
-                            const views = v.views || 0;
-                            const likes = v.likes?.summary?.total_count || 0;
-                            const comments = v.comments?.summary?.total_count || 0;
-                            totalViews += views; totalLikes += likes; totalComments += comments;
-                            let thumbnail = v.thumbnails?.data?.length > 0 ? (v.thumbnails.data.reduce((b, t) => (!b || (t.height || 0) > (b.height || 0)) ? t : b, null)?.uri || v.thumbnails.data[0].uri) : null;
-                            recentContent.push({ id: v.id, title: v.title || (v.description || 'Facebook Video').slice(0, 100), description: (v.description || '').slice(0, 300), url: v.permalink_url || `https://www.facebook.com/${v.id}`, thumbnail, views, likes, comments, duration: v.length ? Math.round(v.length) : null, durationStr: v.length ? `${Math.floor(v.length / 60)}:${String(Math.round(v.length % 60)).padStart(2, '0')}` : null, uploadDate: v.created_time ? v.created_time.replace(/-/g, '').slice(0, 8) : null, timestamp: v.created_time ? Math.floor(new Date(v.created_time).getTime() / 1000) : null, type: 'video' });
-                        }
-
-                        let postLikes = 0, postComments = 0, postShares = 0;
-                        for (const p of posts) { postLikes += p.likes?.summary?.total_count || 0; postComments += p.comments?.summary?.total_count || 0; postShares += p.shares?.count || 0; }
-
-                        metrics = { avatar: avatarUrl, followers: pageFollowers, pageLikes, pageName, pageCategory, totalRecentViews: totalViews, totalRecentLikes: totalLikes, totalRecentComments: totalComments, totalPostLikes: postLikes, totalPostComments: postComments, totalPostShares: postShares, postCount: posts.length, engagementRate: pageFollowers > 0 ? parseFloat(((totalLikes + totalComments + postLikes + postComments) / pageFollowers * 100).toFixed(2)) : 0, videoCount: recentContent.length };
-                        account.metrics = metrics;
-                        account.recentContent = recentContent;
-                        saveDB(db);
-                        graphApiSuccess = true;
-                        console.log(`  [Facebook] Graph API OK: ${fmt(pageFollowers)} followers, ${recentContent.length} videos, ${posts.length} posts`);
-                    } catch (graphErr) {
-                        console.log(`  [Facebook] Graph API failed: ${graphErr.message}`);
-                    }
-                }
-
+                // Official private analytics are available only via metrics OAuth.
                 // ============================================================
                 // STRATEGY 2: Puppeteer (real browser scraping)
                 // ============================================================
@@ -1713,7 +1341,7 @@ app.post('/api/fetch/:platform/:id', async (req, res) => {
                     } catch (puppeteerErr) {
                         if (browser) try { await browser.close(); } catch (e) { }
                         console.log(`  [Facebook] Puppeteer failed: ${puppeteerErr.message}`);
-                        metrics = { error: `Não foi possível extrair dados do Facebook. ${fbToken ? 'Token expirado e Puppeteer falhou.' : 'Configure o token da API ou verifique se o Chrome está instalado.'}` };
+                        metrics = { error: 'Não foi possível extrair dados públicos do Facebook. Verifique o Chrome ou conecte a página pelo OAuth no painel de métricas.' };
                     }
                 }
 
@@ -1812,7 +1440,7 @@ app.post('/api/fetch/:platform/:id', async (req, res) => {
         saveDB(db);
 
         console.log(`[Fetch] Done: ${platform}/@${account.handle} — ${account.recentContent?.length || 0} items`);
-        res.end(JSON.stringify({ status: 'done', metrics: account.metrics, recentContent: account.recentContent, lastFetch: account.lastFetch }) + '\n');
+        res.end(JSON.stringify(publicAccountData({ status: 'done', metrics: account.metrics, recentContent: account.recentContent, lastFetch: account.lastFetch })) + '\n');
 
     } catch (err) {
         console.error(`[Fetch Error] ${platform}/@${account.handle}:`, err.message);
@@ -1838,8 +1466,9 @@ app.post('/api/fetch-all/:platform', async (req, res) => {
     for (const account of accounts) {
         try {
             console.log(`[Fetch-All] ${platform}/@${account.handle}...`);
-            const response = await fetch(`http://localhost:${PORT}/api/fetch/${platform}/${account.id}`, { method: 'POST' });
-            const data = await response.json();
+            const response = await fetch(`http://127.0.0.1:${req.socket.localPort}/api/fetch/${platform}/${encodeURIComponent(account.id)}`, { method: 'POST', headers: { ...(req.headers.authorization ? { authorization: req.headers.authorization } : {}), ...(req.headers.origin ? { origin: req.headers.origin } : {}) } });
+            const chunks = (await response.text()).trim().split('\n').filter(Boolean);
+            const data = JSON.parse(chunks.at(-1) || '{}');
             results.push({ id: account.id, handle: account.handle, ...data });
         } catch (e) {
             results.push({ id: account.id, handle: account.handle, error: e.message });
@@ -1880,8 +1509,11 @@ app.post('/api/verify/:platform', async (req, res) => {
     }
 });
 
+// Importable without opening a port, so security/legacy tests use isolated data.
+module.exports = { app, metricsIntegration };
+if (require.main === module) {
 // Start server
-const server = app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, process.env.HOST || '0.0.0.0', () => {
     console.log(`\n╔══════════════════════════════════════════╗`);
     console.log(`║  Social Tracker Server running!          ║`);
     console.log(`║  http://localhost:${PORT}                    ║`);
@@ -1891,5 +1523,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 server.on('error', err => {
     console.error('[Server] Listen error:', err.message);
 });
+server.on('close', () => metricsIntegration.close());
+}
 
 
