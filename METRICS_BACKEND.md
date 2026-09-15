@@ -23,6 +23,71 @@ Use **Node >=22.13** (tested 22.22.1), including in Docker. The Dockerfile now u
 7. Visit `https://tracker.example.com/auth/login`. The browser-native HTTP Basic prompt handles credentials; JavaScript does not read, send, or persist passwords/tokens. Same-origin metrics fetches use native browser authentication. Then navigate `/api/metrics/auth/start?provider=instagram` or `provider=facebook` and complete official consent yourself.
 8. Check authenticated `/api/metrics/config`, then `/api/metrics/accounts`, `/api/metrics/dashboard?provider=instagram&account=all&days=7` and the Facebook equivalent. Configuration or a mocked OAuth test is NOT proof of real authorization/permissions/data. Verify both real callbacks/consents after deployment; no real Tracker domain/deployment was supplied during implementation.
 
+## Private runtime app-credential reference (local filesystem only)
+
+Set `METRICS_SECRETS_FILE=/root/.hermes/secrets/tracker-panel-meta.json` in the
+**server's** deployment environment to load app configuration at startup. Nothing
+is fetched by the browser, from an HTTP endpoint, or from a public/private bucket.
+The reference is a path, not a credential. The local private file is not in Git or
+the Docker build context. There is no implicit default path or automatic remote wiring.
+
+The JSON object allows **only** `META_APP_ID`, `META_APP_SECRET`, `FACEBOOK_APP_ID`,
+and `FACEBOOK_APP_SECRET`, with nonempty string values. A nonempty subset is allowed
+for single-provider deployments; all four are provisioned in the local test file.
+Do not add access tokens, accounts, passwords, or an encryption key. Tracker must
+still have its own access password, encryption key, and fresh data directory; do not
+load the original Lume env file into Tracker or share its account store.
+
+The server loads this file before integration and whole-panel security snapshots.
+Explicit environment variables take precedence **even when empty**: remove/comment
+the four app-variable assignments in your env file to use JSON values. The entire
+JSON file is validated first, even if all four variables are already set. Invalid
+configuration stops startup with `Invalid metrics secrets configuration`, without
+logging file paths, parser contents, or secret values. An absent reference preserves
+existing env-only behavior; an explicitly empty reference is invalid.
+
+Requirements: absolute path; resolved realpath outside the checkout; regular file,
+single hard link, owned by the service UID, mode **0600 or 0400**; immediate resolved
+parent owned by that UID with mode **0700**; valid UTF-8 JSON at most **16 KiB**.
+The loader never repairs permissions. Do not chmod an existing shared directory to
+make this work: use an already-private directory or create a dedicated one. Keep
+ancestors under trusted administrative control; the service user/root must be trusted.
+Changes are read on process startup only; restart Tracker after private rotation.
+Never print the JSON, inspect expanded deployment configuration in logs, or put real
+values into shell arguments, tracked examples, screenshots, or frontend storage.
+
+### Docker read-only reference
+
+The Dockerfile creates `/run/secrets` as 0700. Add the following **reference-only
+fragment to your actual Tracker service** in its private deployment configuration:
+
+```yaml
+services:
+  tracker:
+    environment:
+      METRICS_SECRETS_FILE: /run/secrets/tracker-meta.json
+    volumes:
+      - type: bind
+        source: /root/.hermes/secrets/tracker-panel-meta.json
+        target: /run/secrets/tracker-meta.json
+        read_only: true
+        bind:
+          create_host_path: false
+```
+
+This is not a complete deployment: retain the separate private access/key config,
+new writable data mounts and TLS/private-network settings above. The mount source
+must exist on the **Docker host**; a file on this machine does not configure a remote
+host. The current image runs as root; if changing its UID, provision a dedicated
+private file and `/run/secrets` directory owned by that service UID rather than
+loosening permissions. Do not COPY secrets into an image or use default world-readable
+Docker secret-file permissions. Recreate the container after replacing a bind-mounted
+file atomically so it mounts the new inode.
+
+No actual Tracker hostname has been supplied. Set the real `PUBLIC_BASE_URL` and
+register its two callbacks with Meta before user consent. File loading proves only
+local configuration, not app validity, provider permissions, OAuth, or deployment.
+
 ## Compatibility/security changes
 - Existing other-platform CRUD/folders/fetch routes are retained, not silently migrated.
 - Source-directory static serving is replaced by a small public-asset allowlist. `/accounts.json`, `/server.js`, `/.env`, `/lib/*`, `.git` and dependencies cannot be downloaded.
