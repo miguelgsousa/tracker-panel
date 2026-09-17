@@ -15,10 +15,19 @@ try{
    await page.goto(local.base,{waitUntil:'domcontentloaded'});await page.evaluate(()=>switchTab('instagram',null));
    await page.waitForFunction(()=>document.querySelector('#metrics-instagram')?.getAttribute('aria-busy')==='false');
    const state=await page.evaluate(async()=>({config:await fetch('/api/metrics/config').then(async r=>({status:r.status,body:await r.json()})),accounts:await fetch('/api/metrics/accounts').then(async r=>({status:r.status,body:await r.json()}))}));
-   assert.equal(state.config.status,authenticated?200:503);assert.equal(await page.$eval('#metrics-instagram [data-export]',e=>e.disabled),true);assert.equal(await page.$eval('#metrics-instagram [data-connect]',e=>e.disabled),true);
-   if(authenticated){assert.deepEqual(state.accounts.body.accounts,[]);assert.match(await page.$eval('#metrics-instagram',e=>e.textContent),/Nenhuma conta autorizada/);await page.goto(local.base+'/auth/login',{waitUntil:'domcontentloaded'});assert.equal(new URL(page.url()).pathname,'/');await page.evaluate(()=>switchTab('instagram',null));await page.waitForSelector('#metrics-instagram');}
+   assert.equal(state.config.status,authenticated?200:503);
+   assert.equal(await page.$('#metrics-instagram [data-export]'),null);
+   assert.equal(await page.$('#metrics-instagram .tm-toolbar'),null);
+   await page.click('#instagram .tracker-platform-heading .btn-primary');
+   await page.waitForSelector('#tracker-connect-dialog[open]');
+   await page.waitForFunction(()=>!document.querySelector('[data-connect-status]').textContent.includes('Verificando'));
+   assert.equal(await page.$eval('[data-oauth]',e=>e.disabled),true);
+   assert.match(await page.$eval('[data-connect-status]',e=>e.textContent),authenticated?/configuração pendente/:/503/);
+   assert.match(await page.$eval('[data-connect-status]',e=>e.textContent),/README/);
+   await page.keyboard.press('Escape');
+   if(authenticated){assert.deepEqual(state.accounts.body.accounts,[]);assert.equal(await page.$eval('#metrics-instagram',e=>e.hidden),true);assert.match(await page.$eval('#instagram .tracker-empty',e=>e.textContent),/Nenhum perfil cadastrado/);await page.goto(local.base+'/auth/login',{waitUntil:'domcontentloaded'});assert.equal(new URL(page.url()).pathname,'/');await page.evaluate(()=>switchTab('instagram',null));await page.waitForSelector('#metrics-instagram');}
    else assert.equal(await page.$('#metrics-instagram .tm-kpis'),null);
-   await page.setViewport({width:390,height:844,isMobile:true});await page.evaluate(()=>window.scrollTo(0,0));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+   await page.setViewport({width:390,height:844,isMobile:true});await page.evaluate(()=>{switchTab('instagram',null);updateMobileNav('instagram');window.scrollTo(0,0)});await page.waitForFunction(()=>document.querySelector('#metrics-instagram')?.getAttribute('aria-busy')==='false');assert.equal(await page.$eval('#instagram',e=>e.classList.contains('active')),true);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
    await mkdir('/tmp/tracker-metrics-evidence',{recursive:true});await page.screenshot({path:`/tmp/tracker-metrics-evidence/real-local-${authenticated?'authenticated-empty':'failclosed'}-mobile.png`,fullPage:true});
    assert.deepEqual(errors,[]);console.log(JSON.stringify({passed:true,mode:authenticated?'REAL_LOCAL_AUTHENTICATED_EMPTY':'REAL_LOCAL_FAILCLOSED',configStatus:state.config.status,noMetaConnections:true,mobileNoOverflow:true}));
   }finally{await context.close();await local.close()}

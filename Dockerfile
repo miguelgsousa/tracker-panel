@@ -51,8 +51,9 @@ RUN mkdir -p /app/data
 # Porta (será sobrescrita pela variável PORT do EasyPanel)
 EXPOSE 3000
 
-# Healthcheck para o EasyPanel monitorar
+# Probe the protected local panel using server env only (never log credentials).
+# This checks process/auth readiness, not Meta consent or provider availability.
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD node -e "fetch('http://localhost:' + (process.env.PORT || 3000) + '/api/accounts').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
+    CMD node -e "const e=process.env,headers={};if(e.METRICS_USERNAME&&e.METRICS_PASSWORD)headers.Authorization='Basic '+Buffer.from(e.METRICS_USERNAME+':'+e.METRICS_PASSWORD).toString('base64');fetch('http://127.0.0.1:'+(e.PORT||3000)+'/api/accounts',{headers}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "server.js"]
