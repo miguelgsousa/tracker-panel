@@ -10,7 +10,72 @@ Includes provider-separated Instagram/Facebook OAuth, one-use expiring browser s
 ## Runtime prerequisite (IMPORTANT)
 Use **Node >=22.13** (tested 22.22.1), including in Docker. The Dockerfile now uses `node:22-slim`, and package.json declares the minimum version. Rebuild existing Node 20 containers before enabling metrics: `node:sqlite` is unavailable there. No npm dependency is needed for this engine. The native SQLite experimental warning on Node 22 is expected.
 
-## Configure a NEW Tracker deployment
+## Safe offline setup (recommended)
+
+`https://github.com/miguelgsousa/tracker-panel` is the source repository, **not the
+public deployment origin**. No actual Tracker hostname was supplied. Run setup on
+the actual deployment host as its service user, with Node >=22.13 and dependencies
+installed. A local generated file does not configure a remote deployment.
+
+1. Obtain Tracker's real **HTTPS origin**, without a trailing slash, path, query,
+   fragment or credentials. The embedded engine requires HTTPS even for localhost
+   OAuth callbacks; the CLI rejects all HTTP origins. Loopback HTTP transport behind
+   your HTTPS reverse proxy is fine. Never guess the hostname or use Lume's origin.
+2. Provision an existing private JSON with app configuration using a trusted editor
+   or secret manager. Requirements are below: dedicated parent 0700, file 0600/0400,
+   owned by the service UID, outside the checkout. At least one complete provider
+   ID/secret pair is required; omit BOTH keys for an unused provider. Partial pairs
+   fail setup. No app credentials are downloaded or borrowed automatically.
+3. Substitute your real origin and private file path:
+
+   ```sh
+   npm run setup:metrics -- --origin https://YOUR-TRACKER-HOST --secrets-file /private/tracker-meta.json
+   # Alternative: choose a NEW output folder that does not already exist:
+   npm run setup:metrics -- --origin https://YOUR-TRACKER-HOST --secrets-file /private/tracker-meta.json --output-dir /private/NEW-tracker-runtime
+   ```
+
+   Run only one alternative. The default is a randomly named `tracker-metrics-…`
+   folder in the service user's home. The output parent must already exist, be owned
+   by this UID and not group/world writable. Paths must be absolute, without quotes,
+   backslashes or control characters. Repository paths, including resolved symlink
+   aliases, are rejected. Existing directories are never reused or chmodded.
+
+   Setup creates a **0700** runtime folder and separate **0700** `metrics-data` and
+   `tracker-data` stores, plus **0600** `metrics.env`. It generates new random
+   `METRICS_USERNAME`, `METRICS_PASSWORD` and a distinct 32-byte encryption key,
+   enables whole-panel authentication, sets `DATA_DIR` and legacy `DB_PATH`, and
+   references the validated app JSON without copying its values. It binds to
+   `127.0.0.1:3000` by default. Output contains only the private env path and start
+   command, never credentials. Read access credentials with a trusted private editor;
+   never paste them into chat, logs, screenshots or shell arguments.
+4. Register the exact `<PUBLIC_BASE_URL>/auth/instagram/callback` and/or
+   `<PUBLIC_BASE_URL>/auth/facebook/callback` in the corresponding Meta apps.
+   Configure website domains, permissions/review and tester roles too. Existing
+   Lume registrations do not authorize Tracker.
+5. Run the printed `node --env-file='…/metrics.env' server.js` command from the
+   checkout. Wire this env and persistent storage into your actual service manager
+   and TLS proxy. Setup does not start/restart services, deploy GitHub, open ports,
+   configure DNS/TLS or register callbacks. Existing process environment overrides
+   Node's env file; remove stale overrides, including blank provider app variables.
+   In Docker, mount files/stores privately outside `/app`, adjust env paths to
+   container-visible paths, and use `HOST=0.0.0.0` only on a private network. Do not
+   COPY credentials into images or expose the direct service port publicly.
+6. Visit `<PUBLIC_BASE_URL>/auth/login`, use the generated Basic credentials, check
+   authenticated `/api/metrics/config` and `/api/metrics/accounts`, then connect and
+   complete official provider consent yourself. An empty new workspace is expected.
+
+**Retain and back up this runtime**: keep key, env and encrypted store together
+securely. Never rotate the encryption key with an app secret or reuse Lume storage.
+Setup refuses even an empty preexisting output directory, never overwrites/deletes
+existing data, and does not migrate accounts. A failed write can leave a partially
+created NEW folder for private inspection; do not rerun over an existing runtime.
+Copying the manual template's blank access credentials unchanged leaves the entire
+panel at 503. Missing `METRICS_USERNAME` / `METRICS_PASSWORD` is a server setup error,
+not fixed by adding a public profile in the browser or pushing source to GitHub.
+Successful setup/config proves neither app-secret validity nor public deployment,
+provider permissions/consent or real metrics.
+
+## Manual configuration of a NEW Tracker deployment
 1. Choose Tracker's own HTTPS origin, e.g. `https://tracker.example.com`. No trailing slash/path in `PUBLIC_BASE_URL`. Put a TLS reverse proxy in front; never expose Basic auth over public HTTP. Preserve Authorization and Origin headers. Do not log them.
 2. Create two private writable directories owned by the app service user: `/var/lib/tracker-metrics` (0700, new encrypted store) and `/var/lib/tracker-panel` (legacy tracker account JSON). **Never point DATA_DIR at the running Lume store or import/copy its accounts without explicit authorization.** Repository-local DATA_DIR is rejected.
 3. Copy `.env.metrics.example` to a private file outside the checkout (e.g. `/etc/tracker-panel/metrics.env`), mode 0600. Set `METRICS_ENABLED=true`, `METRICS_USERNAME` and a long unique `METRICS_PASSWORD`; missing either returns 503 for the **entire panel**, including its root document, legacy APIs, assets and callbacks. Set provider app credentials on the server only. Instagram Login credentials and Facebook Login credentials are separate.

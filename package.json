@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
+    "setup:metrics": "node scripts/setup-metrics.mjs",
     "test": "node --test"
   },
   "keywords": [],
