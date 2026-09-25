@@ -1,5 +1,9 @@
 # Tracker metrics frontend contract
 
+## Zernio mode
+
+With `METRICS_PROVIDER=zernio`, the same authenticated routes are backed by the Zernio API, not the embedded Meta engine. See [ZERNIO.md](ZERNIO.md) for private configuration and metric scope. Config declares `source: "zernio"` and read-only connections; accounts are imported automatically and managed at Zernio. Account identifiers are namespaced by credential scope. Direct Meta OAuth/disconnect and advanced Meta media-detail flows must not be used for these accounts. Existing Meta-mode contract follows below.
+
 All metrics are same-origin: `/api/metrics/*`; never call the Lume deployment or send/store provider tokens or HTTP Basic credentials in JavaScript/localStorage. The backend embeds the production Lume engine with its own private encrypted data directory. Metrics always fail closed (503) until server-side METRICS_USERNAME and METRICS_PASSWORD are configured. When METRICS_ENABLED=true or any metrics credential/provider/store setting is present, the entire origin (root HTML, assets, legacy APIs and callbacks) uses the same fail-closed Basic gate. HTTP Basic uses the browser's native HTTPS credential prompt: navigate `/auth/login` to authenticate, then return `/`. API 401 means authentication required; do not offer a provider-token input.
 
 - GET `/api/metrics/config`: configured, providers.instagram/facebook.{configured,missingConfiguration}, connected, accountCount, sessionOwnership=personal, storageAvailable; names only, never secrets.
