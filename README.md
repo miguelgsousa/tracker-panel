@@ -2,6 +2,10 @@
 
 Painel de acompanhamento de redes sociais, com métricas oficiais de Instagram e Facebook integradas ao visual escuro/ciano existente.
 
+## Contas conectadas ao Zernio
+
+Para importar automaticamente as contas já conectadas ao Zernio, use `METRICS_PROVIDER=zernio` e configure a(s) chave(s) somente no servidor. Não é necessário repetir o OAuth Meta no Tracker. O modo mantém a autenticação do painel, separa métricas da conta de valores lifetime dos posts e não desconecta contas remotamente. Consulte **[ZERNIO.md](ZERNIO.md)** para configuração, limites e validação. As instruções de conexão direta com a Meta abaixo aplicam-se ao modo anterior.
+
 ## Métricas oficiais
 
 Nas seções **Instagram** e **Facebook**:
